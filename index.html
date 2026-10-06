@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Neon Penalty Shootout</title>
+<title>Street Penalty King</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Russo+One&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Montserrat:wght@700;900&display=swap" rel="stylesheet">
 <style>
-  html, body { margin: 0; height: 100%; background: #04060d; overflow: hidden;
+  html, body { margin: 0; height: 100%; background: #0b0d12; overflow: hidden;
                touch-action: none; user-select: none; -webkit-user-select: none; }
   #game { width: 100vw; height: 100vh; }
   canvas { display: block; }
@@ -27,27 +27,29 @@ const CFG = {
   W: 480, H: 800,
   S: 2,                       // internal render scale (crisp on hi-dpi / large screens)
   SHOTS: 5,
-  FONT: '"Russo One", "Arial Black", Impact, sans-serif',
+  FONT_UI: '"Montserrat", "Arial Black", sans-serif',   // HUD / labels (weight 900)
+  FONT_POP: '"Anton", Impact, "Arial Narrow", sans-serif', // street / comic display type
   GOAL: { left: 100, right: 380, lineY: 330, height: 150, depth: 22 },
   SPOT: { x: 240, y: 660 },
   BALL_SIZE: 36,
   FAR: 0.46,                  // ball scale when it reaches the goal plane
   C: {
-    bgTop: 0x111c40, bgBottom: 0x04060d,
-    pitchA: 0x0a1226, pitchB: 0x0d1830,
-    line: 0x3df2ff,
-    cyan: 0x00f0ff, pink: 0xff2bd6, lime: 0xb6ff3b, yellow: 0xffd84d,
-    red: 0xff3b5c, white: 0xffffff, ink: 0x0b1020, muted: 0x7f8bb3,
+    sky0: 0x0a0d16, sky1: 0x2b2431,
+    asphalt: 0x1e2229, chalk: 0xe9e4d6,
+    rust: 0x8a4b2a, rustLight: 0xc4783f, rustDark: 0x3e2014,
+    brick: 0x8e3b25, concrete: 0x34363c,
+    green: 0x1faa59, gold: 0xf5b700, red: 0xe63946,
+    warm: 0xffb04a, white: 0xffffff, ink: 0x0b0d12, muted: 0x8b93a1, track: 0x2b3038,
   },
 };
-const RESULT_COLOR = { goal: CFG.C.lime, save: CFG.C.yellow, miss: CFG.C.red };
-const ADD = Phaser.BlendModes.ADD;
+const RESULT_COLOR = { goal: CFG.C.green, save: CFG.C.gold, miss: CFG.C.red };
 
 /* =====================================================================
    2. HELPERS
    ===================================================================== */
 const clamp = Phaser.Math.Clamp;
 const lerp = Phaser.Math.Linear;
+const RND = new Phaser.Math.RandomDataGenerator();
 const hex = n => '#' + n.toString(16).padStart(6, '0');
 const randn = () => {
   let u = 0, v = 0;
@@ -55,30 +57,50 @@ const randn = () => {
   while (!v) v = Math.random();
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 };
+// UI text (Montserrat Black by default)
 const txt = (scene, x, y, str, size, color, extra = {}) =>
   scene.add.text(x, y, str, {
-    fontFamily: CFG.FONT, fontSize: size + 'px',
+    fontFamily: CFG.FONT_UI, fontStyle: '900', fontSize: size + 'px',
     color: typeof color === 'number' ? hex(color) : color,
     resolution: CFG.S, ...extra,
   });
+// Street display text (Anton)
+const pop = (scene, x, y, str, size, color, extra = {}) =>
+  txt(scene, x, y, str, size, color, { fontFamily: CFG.FONT_POP, fontStyle: 'normal', ...extra });
 
 function setupCamera(scene) {
   scene.cameras.main.setZoom(CFG.S).centerOn(CFG.W / 2, CFG.H / 2);
 }
 
-function drawMarkers(g, x0, y, results, current, gap = 24, r = 8) {
+// Horizontal segmented progress tracker (HUD)
+function drawTracker(g, x0, y, results, current, segW = 22, segH = 10, gap = 5) {
   const { C } = CFG;
   for (let i = 0; i < CFG.SHOTS; i++) {
+    const x = x0 + i * (segW + gap), res = results[i];
+    if (res) g.fillStyle(RESULT_COLOR[res], 1);
+    else if (i === current) g.fillStyle(C.white, 0.9);
+    else g.fillStyle(C.track, 1);
+    g.fillRoundedRect(x, y, segW, segH, segH / 2);
+  }
+}
+
+// Round result badges with icons (Game Over)
+function drawBadges(g, cx, y, results, r = 16, gap = 42) {
+  const { C } = CFG;
+  const x0 = cx - (CFG.SHOTS - 1) * gap / 2;
+  for (let i = 0; i < CFG.SHOTS; i++) {
     const x = x0 + i * gap, res = results[i];
-    if (res) {
-      const col = RESULT_COLOR[res];
-      g.fillStyle(col, 0.22); g.fillCircle(x, y, r + 4);
-      g.fillStyle(col, 1); g.fillCircle(x, y, r);
-    } else if (i === current) {
-      g.lineStyle(2, C.cyan, 1); g.strokeCircle(x, y, r);
-      g.fillStyle(C.cyan, 1); g.fillCircle(x, y, 3);
-    } else {
-      g.lineStyle(2, 0x34406a, 1); g.strokeCircle(x, y, r);
+    g.fillStyle(C.ink, 1); g.fillCircle(x + 2, y + 3, r);
+    g.fillStyle(res ? RESULT_COLOR[res] : C.track, 1); g.fillCircle(x, y, r);
+    g.lineStyle(2.5, C.ink, 1); g.strokeCircle(x, y, r);
+    g.lineStyle(3.5, C.ink, 1);
+    if (res === 'goal') {
+      g.beginPath(); g.moveTo(x - 7, y); g.lineTo(x - 2, y + 6); g.lineTo(x + 8, y - 6); g.strokePath();
+    } else if (res === 'miss') {
+      g.lineBetween(x - 6, y - 6, x + 6, y + 6); g.lineBetween(x + 6, y - 6, x - 6, y + 6);
+    } else if (res === 'save') {           // little glove/shield
+      g.fillStyle(C.ink, 1);
+      g.fillPoints([{ x: x - 7, y: y - 7 }, { x: x + 7, y: y - 7 }, { x: x + 7, y: y + 1 }, { x: x, y: y + 8 }, { x: x - 7, y: y + 1 }], true);
     }
   }
 }
@@ -91,10 +113,10 @@ const Textures = {
     if (scene.textures.exists('ball')) return;
     const g = scene.make.graphics({ add: false });
 
-    // --- ball (128px) ---
-    g.fillStyle(0xc4cde4); g.fillCircle(64, 64, 62);
+    // --- classic black & white match ball (128px) ---
+    g.fillStyle(0xb9c0cc); g.fillCircle(64, 64, 62);
     g.fillStyle(0xffffff); g.fillCircle(60, 60, 56);
-    const dark = 0x161b2e;
+    const dark = 0x0b0b0e;
     const pent = (cx, cy, r, rot) => {
       const pts = [];
       for (let i = 0; i < 5; i++) {
@@ -103,26 +125,26 @@ const Textures = {
       }
       g.fillPoints(pts, true);
     };
-    g.fillStyle(dark); pent(64, 64, 17, -Math.PI / 2);
-    g.lineStyle(3, 0x2a3150, 0.55);
+    g.fillStyle(dark); pent(64, 64, 18, -Math.PI / 2);
+    g.lineStyle(3, 0x22252c, 0.7);
     for (let i = 0; i < 5; i++) {
       const a = -Math.PI / 2 + i * Math.PI * 2 / 5;
-      g.lineBetween(64 + Math.cos(a) * 17, 64 + Math.sin(a) * 17, 64 + Math.cos(a) * 33, 64 + Math.sin(a) * 33);
+      g.lineBetween(64 + Math.cos(a) * 18, 64 + Math.sin(a) * 18, 64 + Math.cos(a) * 33, 64 + Math.sin(a) * 33);
       const b = a + Math.PI / 5;
-      g.fillStyle(dark); pent(64 + Math.cos(b) * 45, 64 + Math.sin(b) * 45, 12, b);
+      g.fillStyle(dark); pent(64 + Math.cos(b) * 45, 64 + Math.sin(b) * 45, 13, b);
     }
-    g.lineStyle(3, 0x0b1020, 0.35); g.strokeCircle(64, 64, 61);
-    g.fillStyle(0xffffff, 0.55); g.fillEllipse(44, 38, 28, 16);
+    g.lineStyle(4, 0x0b0d12, 0.9); g.strokeCircle(64, 64, 61);
+    g.fillStyle(0xffffff, 0.6); g.fillEllipse(44, 38, 26, 14);
     g.generateTexture('ball', 128, 128);
 
-    // --- spark ---
-    g.clear(); g.fillStyle(0xffffff); g.fillCircle(8, 8, 8);
-    g.generateTexture('spark', 16, 16);
+    // --- confetti strip ---
+    g.clear(); g.fillStyle(0xffffff); g.fillRect(0, 0, 8, 14);
+    g.generateTexture('confetti', 8, 14);
 
-    // --- soft radial glow ---
+    // --- soft radial blob (dust, light pools) ---
     g.clear();
     for (let r = 64; r > 0; r -= 2) { g.fillStyle(0xffffff, 0.035); g.fillCircle(64, 64, r); }
-    g.generateTexture('glow', 128, 128);
+    g.generateTexture('soft', 128, 128);
 
     g.destroy();
   },
@@ -138,20 +160,43 @@ class Keeper {
     this.baseY = GOAL.lineY + 2;
     this.center = (GOAL.left + GOAL.right) / 2;
 
-    this.shadow = scene.add.ellipse(this.center, this.baseY, 64, 12, 0x000000, 0.45).setDepth(3.5);
+    this.shadow = scene.add.ellipse(this.center, this.baseY, 64, 12, 0x000000, 0.5).setDepth(3.5);
     this.c = scene.add.container(this.center, this.baseY).setDepth(4);
 
+    // Streetwear keeper: green jersey, black trackpants with side stripes, white kicks,
+    // orange gloves, red headband. Drawn with a bold outline for a sticker/comic look.
     const g = scene.add.graphics();
-    g.fillStyle(0x1c2550); g.fillRoundedRect(-15, -44, 12, 40, 4); g.fillRoundedRect(3, -44, 12, 40, 4);
-    g.fillStyle(0xffffff); g.fillRoundedRect(-18, -7, 16, 7, 3); g.fillRoundedRect(2, -7, 16, 7, 3);
-    g.fillStyle(0xc4179f); g.fillRoundedRect(-34, -110, 11, 44, 5); g.fillRoundedRect(23, -110, 11, 44, 5);
-    g.fillStyle(C.pink); g.fillRoundedRect(-22, -88, 44, 50, 12);
-    g.fillStyle(0xffffff, 0.85); g.fillRect(-22, -72, 44, 3);
-    g.fillStyle(0x1c2550); g.fillRoundedRect(-18, -46, 36, 14, 4);
-    g.fillStyle(0xe2a97f); g.fillCircle(0, -100, 11);
-    g.fillStyle(0x161a2b); g.fillEllipse(0, -107, 24, 11);
-    g.fillStyle(C.lime); g.fillCircle(-28, -114, 9); g.fillCircle(28, -114, 9);
-    const num = txt(scene, 0, -58, '1', 14, C.ink).setOrigin(0.5);
+    const ink = C.ink, skin = 0x5b3a22;
+    const shape = (color, fn) => { g.fillStyle(color, 1); fn('fill'); g.lineStyle(2.5, ink, 1); fn('stroke'); };
+    const rr = (x, y, w, h, r) => m => (m === 'fill' ? g.fillRoundedRect(x, y, w, h, r) : g.strokeRoundedRect(x, y, w, h, r));
+    const circ = (x, y, r) => m => (m === 'fill' ? g.fillCircle(x, y, r) : g.strokeCircle(x, y, r));
+
+    // arms (forearm skin + jersey sleeve)
+    shape(skin, rr(-34, -110, 11, 26, 5)); shape(skin, rr(23, -110, 11, 26, 5));
+    shape(C.green, rr(-35, -90, 13, 22, 5)); shape(C.green, rr(22, -90, 13, 22, 5));
+    // legs: trackpants
+    shape(0x17181d, rr(-15, -46, 13, 40, 4)); shape(0x17181d, rr(2, -46, 13, 40, 4));
+    g.fillStyle(0xffffff, 0.9); g.fillRect(-14, -44, 2, 36); g.fillRect(12, -44, 2, 36);
+    // sneakers
+    shape(0xf4f4f4, rr(-19, -9, 17, 9, 3)); shape(0xf4f4f4, rr(2, -9, 17, 9, 3));
+    g.fillStyle(C.red, 1); g.fillRect(-18, -3, 15, 2); g.fillRect(3, -3, 15, 2);
+    // jersey torso
+    shape(C.green, rr(-22, -90, 44, 50, 12));
+    g.fillStyle(0xffffff, 1);
+    g.fillPoints([{ x: -9, y: -90 }, { x: 9, y: -90 }, { x: 0, y: -80 }], true);       // V collar
+    g.fillRect(-22, -50, 44, 4);                                                    // hem band
+    g.fillStyle(0xffffff, 0.92); g.fillRect(-22, -74, 6, 22); g.fillRect(16, -74, 6, 22); // side panels
+    // waistband
+    shape(0x17181d, rr(-18, -48, 36, 8, 3));
+    // head, hair, headband
+    shape(skin, circ(0, -100, 11));
+    g.fillStyle(0x120d09, 1); g.fillEllipse(0, -108, 22, 9);
+    g.fillStyle(C.red, 1); g.fillRect(-11, -106, 22, 4);
+    // gloves
+    shape(0xff7a1a, circ(-28, -114, 9)); shape(0xff7a1a, circ(28, -114, 9));
+    g.fillStyle(ink, 1); g.fillRect(-34, -110, 12, 2); g.fillRect(22, -110, 12, 2);
+
+    const num = pop(scene, 0, -64, '1', 18, C.white, { stroke: hex(ink), strokeThickness: 3 }).setOrigin(0.5);
     this.c.add([g, num]);
 
     this.mode = 'patrol';
@@ -260,29 +305,33 @@ class GameScene extends Phaser.Scene {
     Textures.build(this);
     const { C } = CFG;
 
+    RND.sow(['street-penalty-king']);   // same street layout every round
     this.drawBackground();
     this.drawPitch();
 
     this.netG = this.add.graphics().setDepth(2);
     this.drawNet();
     this.postsG = this.add.graphics().setDepth(5);
-    this.drawPosts(this.postsG, C.cyan);
-    this.flashG = this.add.graphics().setDepth(5.1).setAlpha(0);
+    this.drawPosts(this.postsG);
 
     this.keeper = new Keeper(this);
 
-    this.shadow = this.add.ellipse(0, 0, 34, 10, 0x000000, 0.5).setDepth(6);
-    this.trailG = this.add.graphics().setDepth(7).setBlendMode(ADD);
-    this.ballGlow = this.add.image(0, 0, 'glow').setDepth(7.5).setTint(C.cyan).setBlendMode(ADD);
+    this.shadow = this.add.ellipse(0, 0, 34, 10, 0x000000, 0.55).setDepth(6);
+    this.trailG = this.add.graphics().setDepth(7);
     this.ball = this.add.image(0, 0, 'ball').setDepth(8);
-    this.swipeG = this.add.graphics().setDepth(9).setBlendMode(ADD);
+    this.swipeG = this.add.graphics().setDepth(9);
 
-    this.sparks = this.add.particles(0, 0, 'spark', {
-      speed: { min: 120, max: 420 }, angle: { min: 0, max: 360 },
-      lifespan: { min: 450, max: 900 }, scale: { start: 0.6, end: 0 },
-      alpha: { start: 1, end: 0 }, gravityY: 480, blendMode: 'ADD',
-      tint: [C.lime, C.cyan, C.pink, C.yellow], emitting: false,
+    this.confetti = this.add.particles(0, 0, 'confetti', {
+      speed: { min: 160, max: 460 }, angle: { min: 200, max: 340 },
+      lifespan: { min: 900, max: 1500 }, scale: { min: 0.5, max: 0.9 },
+      rotate: { min: 0, max: 360 }, alpha: { start: 1, end: 0.2 }, gravityY: 520,
+      tint: [0x008751, 0xffffff, C.gold], emitting: false,
     }).setDepth(15);
+    this.dust = this.add.particles(0, 0, 'soft', {
+      speed: { min: 20, max: 90 }, angle: { min: 180, max: 360 },
+      lifespan: { min: 450, max: 750 }, scale: { start: 0.12, end: 0.45 },
+      alpha: { start: 0.55, end: 0 }, gravityY: -30, tint: 0xa79d8c, emitting: false,
+    }).setDepth(14);
 
     this.buildHud();
     this.buildHint();
@@ -297,62 +346,146 @@ class GameScene extends Phaser.Scene {
 
   /* ---------- environment ---------- */
   drawBackground() {
-    const { W, H, C } = CFG;
+    const { W, C } = CFG;
     const g = this.add.graphics().setDepth(0);
-    g.fillGradientStyle(C.bgTop, C.bgTop, C.bgBottom, C.bgBottom, 1);
-    g.fillRect(0, 0, W, H);
 
-    // stands + crowd
-    g.fillStyle(0x070b19, 1); g.fillRect(0, 150, W, 170);
-    for (let k = 0; k < 5; k++) { g.fillStyle(0x10183a, 1); g.fillRect(0, 152 + k * 28, W, 2); }
-    const cols = [C.cyan, C.pink, C.lime, C.yellow, 0xffffff];
-    for (let i = 0; i < 260; i++) {
-      g.fillStyle(Phaser.Utils.Array.GetRandom(cols), 0.05 + Math.random() * 0.18);
-      g.fillCircle(Math.random() * W, 158 + Math.random() * 128, 1 + Math.random() * 1.6);
+    // night sky with sodium-light smog near the horizon
+    g.fillGradientStyle(C.sky0, C.sky0, C.sky1, C.sky1, 1);
+    g.fillRect(0, 0, W, 330);
+    this.add.image(240, 235, 'soft').setDisplaySize(760, 240).setTint(C.warm).setAlpha(0.2).setDepth(0);
+
+    // skyline silhouettes with lit windows, water tanks and antennas
+    let x = -10;
+    while (x < W) {
+      const w = RND.between(26, 62), h = RND.between(50, 135), top = 245 - h;
+      g.fillStyle(0x141924, 1); g.fillRect(x, top, w, h + 10);
+      for (let wy = top + 8; wy < 236; wy += 10) {
+        for (let wx = x + 5; wx < x + w - 6; wx += 9) {
+          if (RND.frac() < 0.28) {
+            g.fillStyle(RND.frac() < 0.82 ? 0xffc35a : 0xa9d6ff, 0.22 + RND.frac() * 0.5);
+            g.fillRect(wx, wy, 4, 5);
+          }
+        }
+      }
+      g.fillStyle(0x141924, 1);
+      if (RND.frac() < 0.35) { g.fillRect(x + w / 2 - 7, top - 11, 14, 9); g.fillRect(x + w / 2 - 6, top - 3, 2, 3); g.fillRect(x + w / 2 + 4, top - 3, 2, 3); }
+      if (RND.frac() < 0.3) { g.lineStyle(1.5, 0x141924, 1); g.lineBetween(x + 6, top, x + 6, top - 18); }
+      x += w + RND.between(0, 6);
     }
-    // phone-flash twinkles in the crowd
-    for (let i = 0; i < 16; i++) {
-      const s = this.add.image(Math.random() * W, 160 + Math.random() * 120, 'spark')
-        .setDepth(0).setScale(0.35).setAlpha(0).setBlendMode(ADD);
+
+    // flyover bridge
+    g.fillStyle(0x0d1018, 1); g.fillRect(0, 186, W, 20);
+    g.fillStyle(0x2a303c, 1); g.fillRect(0, 182, W, 4);
+    g.lineStyle(1.5, 0x2a303c, 1); g.lineBetween(0, 174, W, 174);
+    for (let px = 0; px < W; px += 12) g.fillRect(px, 174, 1.5, 8);
+    [70, 250, 430].forEach(px => { g.fillStyle(0x0d1018, 1); g.fillRect(px - 10, 206, 20, 40); });
+    // bridge lamps
+    for (let lx = 40; lx < W; lx += 120) {
+      g.fillStyle(0x0d1018, 1); g.fillRect(lx, 160, 2, 14); g.fillRect(lx, 160, 8, 2);
+      g.fillStyle(0xffd27a, 1); g.fillCircle(lx + 8, 162, 2);
+      this.add.image(lx + 8, 166, 'soft').setDisplaySize(40, 30).setTint(C.warm).setAlpha(0.35).setDepth(0);
+    }
+    // traffic on the flyover
+    for (let i = 0; i < 5; i++) {
+      const right = i % 2 === 0;
+      const car = this.add.container(right ? -30 : W + 30, right ? 191 : 198).setDepth(0);
+      const body = this.add.rectangle(0, 0, 22, 6, 0x07090e);
+      const lamp = this.add.rectangle(right ? 11 : -11, 0, 3, 2, right ? 0xfff2c4 : 0xff3b30);
+      const beam = this.add.image(right ? 22 : -22, 0, 'soft').setDisplaySize(30, 8).setTint(right ? 0xfff2c4 : 0xff3b30).setAlpha(0.45);
+      car.add([beam, body, lamp]);
       this.tweens.add({
-        targets: s, alpha: 0.95, duration: 110, yoyo: true, repeat: -1,
-        delay: Math.random() * 3000, repeatDelay: 1500 + Math.random() * 4000,
+        targets: car, x: right ? W + 30 : -30, duration: RND.between(5000, 8000),
+        delay: RND.between(0, 5000), repeat: -1, repeatDelay: RND.between(500, 3000),
       });
     }
 
-    // floodlight rigs
-    [[70, C.cyan], [410, C.pink]].forEach(([x, tint]) => {
-      this.add.image(x, 72, 'glow').setDisplaySize(440, 320).setTint(tint).setAlpha(0.24).setBlendMode(ADD).setDepth(0);
-      g.fillStyle(0x1a2344, 1); g.fillRoundedRect(x - 42, 58, 84, 20, 5);
-      g.fillStyle(0xffffff, 0.95);
-      for (let j = 0; j < 5; j++) g.fillCircle(x - 30 + j * 15, 68, 4);
+    // concrete wall with graffiti
+    g.fillStyle(0x45474e, 1); g.fillRect(0, 230, W, 7);
+    g.fillStyle(C.concrete, 1); g.fillRect(0, 237, W, 85);
+    g.lineStyle(1, 0x2a2c31, 1);
+    for (let wy = 251, row = 0; wy < 322; wy += 14, row++) {
+      g.lineBetween(0, wy, W, wy);
+      for (let wx = (row % 2) * 14; wx < W; wx += 28) g.lineBetween(wx, wy - 14, wx, wy);
+    }
+    g.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0, 0, 0.55, 0.55);
+    g.fillRect(0, 280, W, 42);
+    // grime stains
+    for (let i = 0; i < 10; i++) { g.fillStyle(0x1d1e22, 0.35); g.fillEllipse(RND.between(0, W), RND.between(250, 320), RND.between(20, 60), RND.between(8, 20)); }
+
+    const tag = (x, y, str, size, fill, stroke, angle) => {
+      const t = pop(this, x, y, str, size, fill, { stroke: hex(stroke), strokeThickness: 6 })
+        .setOrigin(0.5).setAngle(angle).setAlpha(0.9).setDepth(0.4)
+        .setShadow(2, 2, 'rgba(0,0,0,0.6)', 3, true, false);
+      // paint drips
+      const d = this.add.graphics().setDepth(0.39);
+      d.lineStyle(2, fill, 0.75);
+      for (let i = 0; i < 6; i++) {
+        const dx = x + RND.between(-t.width / 2.4, t.width / 2.4), dy = y + t.height / 2 - 6;
+        d.lineBetween(dx, dy, dx, dy + RND.between(5, 16));
+      }
+    };
+    tag(240, 276, 'STREET KING', 46, C.green, C.ink, -3);
+    tag(46, 272, 'LAGOS', 26, C.gold, C.ink, 7);
+    tag(436, 270, '9JA!', 32, C.white, C.green, -9);
+
+    // street lamps at the edges
+    [[10, 1], [470, -1]].forEach(([lx, dir]) => {
+      g.fillStyle(0x0b0d12, 1); g.fillRect(lx - 3, 108, 6, 230); g.fillRect(lx, 108, dir * 30, 4);
+      g.fillStyle(0x23272f, 1); g.fillRoundedRect(lx + dir * 30 - 9, 106, 18, 8, 3);
+      g.fillStyle(0xffe1a3, 1); g.fillRect(lx + dir * 30 - 6, 113, 12, 2);
+      this.add.image(lx + dir * 30, 118, 'soft').setDisplaySize(130, 120).setTint(C.warm).setAlpha(0.45).setDepth(0);
     });
 
-    // scrolling LED board behind the goal
-    g.fillStyle(0x03050c, 1); g.fillRect(0, 290, W, 32);
-    g.lineStyle(2, C.cyan, 0.6); g.lineBetween(0, 290, W, 290);
-    const unit = 'NEON CUP  ·  PENALTY SHOOTOUT  ·  ';
-    this.board = txt(this, 0, 306, unit.repeat(4), 15, C.pink).setOrigin(0, 0.5).setAlpha(0.8).setDepth(0.5);
-    this.boardUnit = this.board.width / 4;
+    // spectators leaning on the wall
+    [24, 52, 80, 402, 428, 456].forEach((sx, i) => {
+      const h = 34 + (i % 3) * 4;
+      g.fillStyle(0x07090d, 1);
+      g.fillRoundedRect(sx - 9, 330 - h, 18, h - 12, 6);
+      g.fillRect(sx - 7, 318, 5, 12); g.fillRect(sx + 2, 318, 5, 12);
+      g.fillCircle(sx, 330 - h - 7, 7);
+      if (i === 1 || i === 4) { g.fillStyle(0xcfe7ff, 0.9); g.fillRect(sx + 6, 330 - h - 2, 4, 6); }   // phone filming
+    });
   }
 
   drawPitch() {
     const { W, H, GOAL, SPOT, C } = CFG;
+    const top = GOAL.lineY - 8;
     const g = this.add.graphics().setDepth(1);
-    let y = GOAL.lineY - 8, h = 12, i = 0;
-    while (y < H) {
-      g.fillStyle(i++ % 2 ? C.pitchA : C.pitchB, 1);
-      g.fillRect(0, y, W, h + 1);
-      y += h; h *= 1.13;
-    }
-    this.add.image(SPOT.x, SPOT.y - 20, 'glow').setDepth(1).setTint(C.cyan).setAlpha(0.12).setDisplaySize(520, 300).setBlendMode(ADD);
-    this.add.image(240, GOAL.lineY + 10, 'glow').setDepth(1).setTint(C.pink).setAlpha(0.14).setDisplaySize(600, 170).setBlendMode(ADD);
 
-    g.lineStyle(2, C.line, 0.55); g.lineBetween(0, GOAL.lineY, W, GOAL.lineY);
-    g.lineStyle(2, C.line, 0.4);
+    g.fillStyle(C.asphalt, 1); g.fillRect(0, top, W, H - top);
+    g.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0.45, 0.45, 0, 0);
+    g.fillRect(0, top, W, 150);
+    // aggregate grain (bigger toward the camera)
+    for (let i = 0; i < 2000; i++) {
+      const y = RND.between(top, H), s = 0.8 + (y - top) / 260;
+      g.fillStyle(RND.frac() < 0.5 ? 0x000000 : 0xffffff, 0.035 + RND.frac() * 0.07);
+      g.fillRect(RND.between(0, W), y, s, s);
+    }
+    // cracks
+    g.lineStyle(1.5, 0x101216, 0.9);
+    for (let i = 0; i < 6; i++) {
+      let cx = RND.between(0, W), cy = RND.between(380, H);
+      g.beginPath(); g.moveTo(cx, cy);
+      for (let k = 0; k < 6; k++) { cx += RND.between(-18, 18); cy += RND.between(4, 16); g.lineTo(cx, cy); }
+      g.strokePath();
+    }
+    // oil stain + manhole cover
+    g.fillStyle(0x0f1115, 0.55); g.fillEllipse(104, 612, 96, 26); g.fillEllipse(130, 618, 54, 14);
+    g.fillStyle(0x2a2e36, 1); g.fillEllipse(396, 560, 76, 26);
+    g.lineStyle(2, 0x14171c, 1); g.strokeEllipse(396, 560, 76, 26);
+    g.lineStyle(1.5, 0x14171c, 1);
+    for (let i = -2; i <= 2; i++) {
+      const dx = i * 12, hh = 13 * Math.sqrt(1 - (dx / 38) ** 2);
+      g.lineBetween(396 + dx, 560 - hh + 2, 396 + dx, 560 + hh - 2);
+    }
+    // warm streetlight pool
+    this.add.image(240, 520, 'soft').setDepth(1).setTint(C.warm).setAlpha(0.1).setDisplaySize(620, 320);
+
+    // painted chalk/paint markings (same layout as before)
+    g.lineStyle(3, C.chalk, 0.55); g.lineBetween(0, GOAL.lineY, W, GOAL.lineY);
+    g.lineStyle(3, C.chalk, 0.42);
     g.beginPath(); g.moveTo(52, GOAL.lineY); g.lineTo(26, 402); g.lineTo(454, 402); g.lineTo(428, GOAL.lineY); g.strokePath();
     g.lineBetween(0, 722, W, 722);
-    // penalty arc (the part outside the box)
     g.beginPath();
     let started = false;
     for (let a = 0; a <= Math.PI; a += 0.02) {
@@ -361,7 +494,10 @@ class GameScene extends Phaser.Scene {
       if (!started) { g.moveTo(px, py); started = true; } else g.lineTo(px, py);
     }
     g.strokePath();
-    g.fillStyle(0xffffff, 0.8); g.fillEllipse(SPOT.x, SPOT.y, 14, 5);
+    // faded yellow road lines along the bottom
+    g.fillStyle(C.gold, 0.35);
+    for (let x = 6; x < W; x += 46) g.fillRect(x, 784, 26, 5);
+    g.fillStyle(C.chalk, 0.85); g.fillEllipse(SPOT.x, SPOT.y, 14, 5);
   }
 
   drawNet() {
@@ -373,20 +509,27 @@ class GameScene extends Phaser.Scene {
     const n = this.net;
     const off = (x, y) => n.v === 0 ? 0
       : -n.v * 16 * Math.exp(-((x - n.x) ** 2 + (y - n.y) ** 2) / (2 * 48 * 48));
+    const sag = x => 3 * Math.sin(Math.PI * (x - bl) / (br - bl));   // tired, slightly sagging net
 
-    g.fillStyle(0x000000, 0.4); g.fillRect(bl, bt, br - bl, bb - bt);
-    g.lineStyle(1, C.pink, 0.3);
+    g.fillStyle(0x000000, 0.3); g.fillRect(bl, bt, br - bl, bb - bt);
+    g.lineStyle(1, C.chalk, 0.32);
     for (let x = bl; x <= br + 0.1; x += 14) {
       g.beginPath();
-      for (let y = bt; y <= bb + 0.1; y += 8) y === bt ? g.moveTo(x, y + off(x, y)) : g.lineTo(x, y + off(x, y));
+      for (let y = bt; y <= bb + 0.1; y += 8) {
+        const yy = y + sag(x) + off(x, y);
+        y === bt ? g.moveTo(x, yy) : g.lineTo(x, yy);
+      }
       g.strokePath();
     }
     for (let y = bt; y <= bb + 0.1; y += 12) {
       g.beginPath();
-      for (let x = bl; x <= br + 0.1; x += 8) x === bl ? g.moveTo(x, y + off(x, y)) : g.lineTo(x, y + off(x, y));
+      for (let x = bl; x <= br + 0.1; x += 8) {
+        const yy = y + sag(x) + off(x, y);
+        x === bl ? g.moveTo(x, yy) : g.lineTo(x, yy);
+      }
       g.strokePath();
     }
-    g.lineStyle(1, C.pink, 0.22);
+    g.lineStyle(1, C.chalk, 0.22);
     for (let i = 0; i <= 20; i++) {
       const t = i / 20;
       g.lineBetween(lerp(GOAL.left, GOAL.right, t), barY, lerp(bl, br, t), bt);
@@ -396,32 +539,71 @@ class GameScene extends Phaser.Scene {
       g.lineBetween(GOAL.left, lerp(barY, GOAL.lineY, t), bl, lerp(bt, bb, t));
       g.lineBetween(GOAL.right, lerp(barY, GOAL.lineY, t), br, lerp(bt, bb, t));
     }
-    g.lineStyle(2, C.pink, 0.55);
+    // back frame: old rusty tubing
+    g.lineStyle(3, C.rustDark, 1);
     g.strokeRect(bl, bt, br - bl, bb - bt);
     g.lineBetween(GOAL.left, GOAL.lineY, bl, bb);
     g.lineBetween(GOAL.right, GOAL.lineY, br, bb);
   }
 
-  drawPosts(g, color) {
-    const { GOAL } = CFG;
+  drawPosts(g) {
+    const { GOAL, C } = CFG;
     const barY = GOAL.lineY - GOAL.height;
-    const path = () => {
+    const path = (ox = 0, oy = 0) => {
       g.beginPath();
-      g.moveTo(GOAL.left, GOAL.lineY); g.lineTo(GOAL.left, barY);
-      g.lineTo(GOAL.right, barY); g.lineTo(GOAL.right, GOAL.lineY);
+      g.moveTo(GOAL.left + ox, GOAL.lineY); g.lineTo(GOAL.left + ox, barY + oy);
+      g.lineTo(GOAL.right + ox, barY + oy); g.lineTo(GOAL.right + ox, GOAL.lineY);
       g.strokePath();
     };
     g.clear();
-    [[20, 0.05], [13, 0.11], [8, 0.22]].forEach(([w, a]) => { g.lineStyle(w, color, a); path(); });
-    g.lineStyle(5, color, 1); path();
-    g.lineStyle(2, 0xffffff, 0.9); path();
+    g.lineStyle(10, 0x1a0e08, 1); path();
+    g.lineStyle(6, C.rust, 1); path();
+    g.lineStyle(2, C.rustLight, 0.9); path(-1.5, -1.5);
+
+    // rust blotches + leftover white paint chips, scattered along the frame
+    const rng = new Phaser.Math.RandomDataGenerator(['rusty-goal']);
+    const along = t => {   // 0..1 around the frame → point
+      const L1 = GOAL.height, L2 = GOAL.right - GOAL.left, total = L1 * 2 + L2;
+      let d = t * total;
+      if (d < L1) return { x: GOAL.left, y: GOAL.lineY - d };
+      d -= L1;
+      if (d < L2) return { x: GOAL.left + d, y: barY };
+      d -= L2;
+      return { x: GOAL.right, y: barY + d };
+    };
+    for (let i = 0; i < 46; i++) {
+      const p = along(rng.frac());
+      g.fillStyle(rng.frac() < 0.7 ? C.rustDark : 0x5c2f19, 0.85);
+      g.fillCircle(p.x + rng.between(-1, 1), p.y + rng.between(-1, 1), rng.realInRange(1, 2.6));
+    }
+    for (let i = 0; i < 16; i++) {
+      const p = along(rng.frac());
+      g.fillStyle(0xd8d2c4, 0.9);
+      g.fillRect(p.x - 2, p.y - 1.5, rng.between(2, 5), rng.between(2, 3));
+    }
+    // welded corner joints
+    g.fillStyle(C.rustDark, 1);
+    g.fillCircle(GOAL.left, barY, 5); g.fillCircle(GOAL.right, barY, 5);
+
+    // makeshift bricks holding the posts down
+    const bricks = x => {
+      g.fillStyle(C.brick, 1); g.lineStyle(1.5, 0x3b160c, 1);
+      g.fillRect(x - 13, GOAL.lineY - 6, 26, 9); g.strokeRect(x - 13, GOAL.lineY - 6, 26, 9);
+      g.fillRect(x - 8, GOAL.lineY - 13, 17, 7); g.strokeRect(x - 8, GOAL.lineY - 13, 17, 7);
+      g.fillStyle(0xb25536, 1); g.fillRect(x - 12, GOAL.lineY - 5, 24, 2);
+    };
+    bricks(GOAL.left); bricks(GOAL.right);
+
+    // a lone slipper by the right post
+    const sx = GOAL.right + 30, sy = GOAL.lineY + 10;
+    g.fillStyle(0x2b6cb0, 1); g.fillEllipse(sx, sy, 22, 8);
+    g.lineStyle(2, 0xf5b700, 1); g.beginPath(); g.arc(sx + 2, sy, 5, Math.PI, 0); g.strokePath();
   }
 
-  flashPosts(color) {
-    this.drawPosts(this.flashG, color);
-    this.tweens.killTweensOf(this.flashG);
-    this.flashG.setAlpha(1);
-    this.tweens.add({ targets: this.flashG, alpha: 0, duration: 700, ease: 'Quad.easeIn' });
+  shakePosts() {
+    this.tweens.killTweensOf([this.postsG, this.netG]);
+    this.postsG.x = 0; this.netG.x = 0;
+    this.tweens.add({ targets: [this.postsG, this.netG], x: 3, duration: 40, yoyo: true, repeat: 5, onComplete: () => { this.postsG.x = 0; this.netG.x = 0; } });
   }
 
   rippleNet(x, y) {
@@ -438,13 +620,22 @@ class GameScene extends Phaser.Scene {
   buildHud() {
     const { C } = CFG;
     const g = this.add.graphics().setDepth(30);
-    g.fillStyle(0x060a18, 0.94); g.fillRoundedRect(16, 16, 448, 68, 18);
-    g.lineStyle(1.5, C.cyan, 0.35); g.strokeRoundedRect(16, 16, 448, 68, 18);
-    txt(this, 36, 26, 'GOALS', 12, C.muted).setDepth(30);
-    this.scoreText = txt(this, 36, 40, '0', 32, C.lime).setDepth(30).setShadow(0, 0, hex(C.lime), 12, true, true);
-    txt(this, 240, 50, 'PENALTY\nSHOOTOUT', 14, C.white, { align: 'center', lineSpacing: -2 })
-      .setOrigin(0.5).setDepth(30).setShadow(0, 0, hex(C.cyan), 10, true, true);
-    this.shotText = txt(this, 444, 26, '', 12, C.muted).setOrigin(1, 0).setDepth(30);
+    g.fillStyle(0x0b0d12, 0.8); g.fillRoundedRect(16, 16, 448, 70, 16);
+    g.lineStyle(1, 0xffffff, 0.08); g.strokeRoundedRect(16, 16, 448, 70, 16);
+    // flag accent
+    g.fillStyle(0x008751, 1); g.fillRect(16 + 18, 16, 14, 3); g.fillRect(16 + 46, 16, 14, 3);
+    g.fillStyle(0xffffff, 1); g.fillRect(16 + 32, 16, 14, 3);
+
+    txt(this, 34, 28, 'GOALS', 10, C.muted).setDepth(30);
+    this.scoreText = pop(this, 34, 38, '0', 34, C.white).setDepth(30);
+
+    // crown + title
+    g.fillStyle(C.gold, 1);
+    g.fillPoints([{ x: 228, y: 34 }, { x: 231, y: 25 }, { x: 236, y: 31 }, { x: 240, y: 22 }, { x: 244, y: 31 }, { x: 249, y: 25 }, { x: 252, y: 34 }], true);
+    txt(this, 240, 46, 'STREET PENALTY', 10, C.white).setOrigin(0.5).setDepth(30).setAlpha(0.85);
+    pop(this, 240, 66, 'KING', 22, C.gold).setOrigin(0.5).setDepth(30);
+
+    this.shotText = txt(this, 444, 28, '', 10, C.muted).setOrigin(1, 0).setDepth(30);
     this.markG = this.add.graphics().setDepth(30);
     this.updateHud();
   }
@@ -453,7 +644,7 @@ class GameScene extends Phaser.Scene {
     this.scoreText.setText(String(this.stats.goals));
     this.shotText.setText(`SHOT ${Math.min(this.attempt + 1, CFG.SHOTS)} / ${CFG.SHOTS}`);
     this.markG.clear();
-    drawMarkers(this.markG, 340, 62, this.results, this.attempt);
+    drawTracker(this.markG, 314, 52, this.results, this.attempt);
   }
 
   buildHint() {
@@ -461,37 +652,55 @@ class GameScene extends Phaser.Scene {
     this.hint = this.add.container(SPOT.x, SPOT.y - 70).setDepth(10);
     const g = this.add.graphics();
     for (let i = 0; i < 3; i++) {
-      g.lineStyle(3, C.cyan, 0.35 + i * 0.25);
+      g.lineStyle(4, C.chalk, 0.3 + i * 0.25);
       g.beginPath(); g.moveTo(-12, -i * 14 + 6); g.lineTo(0, -i * 14 - 6); g.lineTo(12, -i * 14 + 6); g.strokePath();
     }
     this.hint.add(g);
-    this.hintText = txt(this, 240, 760, 'SWIPE UP TO SHOOT', 16, C.white).setOrigin(0.5).setDepth(10)
-      .setShadow(0, 0, hex(C.cyan), 12, true, true);
+    this.hintText = txt(this, 240, 752, 'FLICK THE BALL TO SHOOT', 15, C.white).setOrigin(0.5).setDepth(10)
+      .setShadow(2, 2, '#000000', 0, true, true);
     this.tweens.add({ targets: this.hint, y: SPOT.y - 84, alpha: 0.5, duration: 650, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-    this.tweens.add({ targets: this.hintText, alpha: 0.45, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    this.tweens.add({ targets: this.hintText, alpha: 0.5, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
   }
 
   setHintVisible(v) { this.hint.setVisible(v); this.hintText.setVisible(v); }
 
   toast(msg) {
-    const t = txt(this, 240, 590, msg, 15, CFG.C.yellow).setOrigin(0.5).setDepth(25);
+    const t = txt(this, 240, 590, msg, 14, CFG.C.gold).setOrigin(0.5).setDepth(25).setShadow(2, 2, '#000000', 0, true, true);
     this.tweens.add({ targets: t, y: 570, alpha: 0, delay: 700, duration: 500, onComplete: () => t.destroy() });
   }
 
+  // Comic-book burst pop-up with an optional pidgin caption tag
   popup(text, color, sub) {
-    const { FONT } = CFG;
-    const t = this.add.text(240, 470, text, {
-      fontFamily: FONT, fontSize: '56px', color: '#ffffff',
-      stroke: hex(color), strokeThickness: 4, resolution: CFG.S,
-    }).setOrigin(0.5).setDepth(20).setShadow(0, 0, hex(color), 26, true, true).setAngle(-4);
-    const fit = Math.min(1, 430 / t.width);
-    t.setScale(0.2).setAlpha(0);
-    this.tweens.add({ targets: t, scale: fit, alpha: 1, duration: 380, ease: 'Back.easeOut' });
-    this.tweens.add({ targets: t, y: 430, alpha: 0, delay: 1050, duration: 400, ease: 'Quad.easeIn', onComplete: () => t.destroy() });
+    const { C } = CFG;
+    const c = this.add.container(240, 470).setDepth(20);
+    const t = pop(this, 0, 0, text, 64, C.white, { stroke: hex(C.ink), strokeThickness: 10 })
+      .setOrigin(0.5).setShadow(5, 5, hex(C.ink), 0, true, true);
+    t.setScale(Math.min(1, 380 / t.width));
+    const rx = t.displayWidth / 2 + 36, ry = t.displayHeight / 2 + 28;
+    const pts = [];
+    for (let i = 0; i < 36; i++) {
+      const a = i / 36 * Math.PI * 2, k = i % 2 ? 0.8 : 1 + Math.random() * 0.12;
+      pts.push({ x: Math.cos(a) * rx * k, y: Math.sin(a) * ry * k });
+    }
+    const b = this.add.graphics();
+    b.fillStyle(C.ink, 1); b.fillPoints(pts.map(p => ({ x: p.x + 7, y: p.y + 7 })), true);
+    b.fillStyle(color, 1); b.fillPoints(pts, true);
+    b.lineStyle(4, C.ink, 1); b.strokePoints(pts, true);
+    c.add([b, t]);
+    c.setAngle(-5).setScale(0.2).setAlpha(0);
+    this.tweens.add({ targets: c, scale: 1, alpha: 1, duration: 360, ease: 'Back.easeOut' });
+    this.tweens.add({ targets: c, angle: -2, duration: 180, delay: 360, yoyo: true, repeat: 1 });
+    this.tweens.add({ targets: c, y: 440, alpha: 0, delay: 1080, duration: 380, ease: 'Quad.easeIn', onComplete: () => c.destroy() });
+
     if (sub) {
-      const s = txt(this, 240, 520, sub, 16, color).setOrigin(0.5).setDepth(20).setAlpha(0);
-      this.tweens.add({ targets: s, alpha: 1, y: 514, delay: 160, duration: 300 });
-      this.tweens.add({ targets: s, alpha: 0, delay: 1050, duration: 400, onComplete: () => s.destroy() });
+      const s = this.add.container(240, 470 + ry + 20).setDepth(21).setAngle(3).setAlpha(0);
+      const st = txt(this, 0, 0, sub, 15, C.white).setOrigin(0.5);
+      const bg = this.add.graphics();
+      bg.fillStyle(C.ink, 0.92); bg.fillRoundedRect(-st.width / 2 - 14, -16, st.width + 28, 32, 8);
+      bg.fillStyle(color, 1); bg.fillRect(-st.width / 2 - 14, -16, 5, 32);
+      s.add([bg, st]);
+      this.tweens.add({ targets: s, alpha: 1, y: s.y - 6, delay: 180, duration: 260 });
+      this.tweens.add({ targets: s, alpha: 0, delay: 1080, duration: 380, onComplete: () => s.destroy() });
     }
   }
 
@@ -500,7 +709,7 @@ class GameScene extends Phaser.Scene {
     const size = CFG.BALL_SIZE * sc;
     this.ball.setDisplaySize(size, size).setPosition(x, gy - lift - size / 2);
     this.shadow.setPosition(x, gy).setDisplaySize(size * 0.95, size * 0.28)
-      .setAlpha(clamp(0.5 - lift / 400, 0.1, 0.5));
+      .setAlpha(clamp(0.55 - lift / 400, 0.1, 0.55));
   }
 
   resetBall() {
@@ -509,7 +718,7 @@ class GameScene extends Phaser.Scene {
     this.shot = null;
     this.tweens.killTweensOf(this.ball);
     this.ball.setDepth(8).setAlpha(1).setRotation(0);
-    this.shadow.setAlpha(0.5);
+    this.shadow.setAlpha(0.55);
     this.placeBall(SPOT.x, SPOT.y, 0, 1);
     const s = this.ball.scale;
     this.ball.setScale(0);
@@ -548,8 +757,8 @@ class GameScene extends Phaser.Scene {
     const g = this.swipeG, pts = this.swipe.pts;
     g.clear();
     if (pts.length < 2) return;
-    [[14, 0.08], [7, 0.2], [3, 0.9]].forEach(([w, a]) => {
-      g.lineStyle(w, CFG.C.cyan, a);
+    [[9, 0x000000, 0.25], [4, CFG.C.chalk, 0.85]].forEach(([w, col, a]) => {
+      g.lineStyle(w, col, a);
       g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
       g.strokePath();
@@ -591,7 +800,7 @@ class GameScene extends Phaser.Scene {
 
   /* ---------- shooting ---------- */
   shoot(dx, dy, speed, curve) {
-    const { GOAL, SPOT, BALL_SIZE, FAR, C } = CFG;
+    const { GOAL, SPOT, BALL_SIZE, FAR } = CFG;
     const aimX = SPOT.x + (dx / -dy) * (SPOT.y - GOAL.lineY) * 0.85;
     const lift = clamp((speed - 0.55) * 58, 0, 340);
     this.shot = {
@@ -601,7 +810,7 @@ class GameScene extends Phaser.Scene {
     };
     this.state = 'flight';
     this.setHintVisible(false);
-    this.sparks.explode(12, this.ball.x, this.ball.y + 10);
+    this.dust.explode(10, SPOT.x, SPOT.y);
 
     // Keeper reads the shot (imperfectly; curve makes it harder)
     const k = this.keeper;
@@ -610,7 +819,6 @@ class GameScene extends Phaser.Scene {
     const predY = GOAL.lineY - lift - r + randn() * 18;
     if (Math.random() < k.wrongWay) predX = k.c.x - (predX - k.c.x);
     k.react(predX, predY);
-    this.ballGlow.setTint(Math.abs(curve) > 60 ? C.pink : C.cyan);
   }
 
   stepFlight() {
@@ -645,18 +853,17 @@ class GameScene extends Phaser.Scene {
     const s = this.shot, b = this.ball;
     const barY = GOAL.lineY - GOAL.height;
     const nearPost = Math.min(b.x - GOAL.left, GOAL.right - b.x) < 50;
-    let label = 'GOAL!';
-    if (b.y < barY + 45 && nearPost) label = 'TOP CORNER!';
-    else if (Math.abs(s.curve) > 70) label = 'WHAT A CURLER!';
-    else if (b.y > GOAL.lineY - 30 && nearPost) label = 'BOTTOM CORNER!';
-    else if (s.speed > 3.1) label = 'ROCKET!';
-    else if (s.speed < 1.1) label = 'CHEEKY!';
+    let label = 'GOAL!', sub = 'Na so! Back of the net';
+    if (b.y < barY + 45 && nearPost) { label = 'TOP CORNER!'; sub = 'Where spider dey sleep!'; }
+    else if (Math.abs(s.curve) > 70) { label = 'AGBA BALLER!'; sub = 'See as e bend am!'; }
+    else if (b.y > GOAL.lineY - 30 && nearPost) { label = 'BOTTOM CORNER!'; sub = 'Keeper no fit reach'; }
+    else if (s.speed > 3.1) { label = 'GBOSA!'; sub = `Thunder shot - ${Math.round(55 + s.speed * 24)} KM/H`; }
+    else if (s.speed < 1.1) { label = 'SHAKARA!'; sub = 'Cool and calm finish'; }
 
     this.stats.goals++;
     this.finish('goal');
-    this.popup(label, C.lime, `${Math.round(55 + s.speed * 24)} KM/H`);
-    this.sparks.explode(60, b.x, b.y);
-    this.flashPosts(C.lime);
+    this.popup(label, C.green, sub);
+    this.confetti.explode(70, b.x, b.y);
     this.rippleNet(b.x, b.y - 10);
     this.cameras.main.shake(200, 0.006);
 
@@ -678,8 +885,8 @@ class GameScene extends Phaser.Scene {
     const side = Math.sign(b.x - this.keeper.c.x) || 1;
     this.stats.saved++;
     this.finish('save');
-    this.popup('SAVED!', C.yellow, 'The keeper read it');
-    this.sparks.explode(30, b.x, b.y);
+    this.popup('SAVED!', C.gold, 'Keeper don catch am!');
+    this.dust.explode(14, b.x, b.y);
     this.cameras.main.shake(140, 0.004);
     this.tweens.add({ targets: this.shadow, alpha: 0, duration: 150 });
     this.tweens.add({
@@ -694,9 +901,9 @@ class GameScene extends Phaser.Scene {
     const b = this.ball;
     this.stats.missed++;
     this.finish('miss');
-    this.popup(kind === 'post' ? 'OFF THE POST!' : 'CROSSBAR!', C.red, 'So close…');
-    this.sparks.explode(28, b.x, b.y);
-    this.flashPosts(C.red);
+    this.popup(kind === 'post' ? 'OFF THE POST!' : 'CROSSBAR!', C.red, 'E remain small!');
+    this.dust.explode(16, b.x, b.y);
+    this.shakePosts();
     this.cameras.main.shake(160, 0.005);
     this.tweens.add({ targets: this.shadow, alpha: 0, duration: 150 });
     const side = b.x < 240 ? -1 : 1;
@@ -712,7 +919,7 @@ class GameScene extends Phaser.Scene {
     const s = this.shot, b = this.ball;
     this.stats.missed++;
     this.finish('miss');
-    this.popup(kind === 'over' ? 'OVER THE BAR!' : 'WIDE!', C.red, 'Keep it on target');
+    this.popup(kind === 'over' ? 'OVER THE BAR!' : 'WIDE!', C.red, kind === 'over' ? 'Na sky you dey aim?' : 'Ah ah! Aim am well');
     this.tweens.add({ targets: this.shadow, alpha: 0, duration: 200 });
     this.tweens.add({
       targets: b, x: b.x + (b.x - s.sx) * 0.25 + s.curve * 0.3, y: b.y - 40,
@@ -734,27 +941,20 @@ class GameScene extends Phaser.Scene {
     });
   }
 
-  /* ---------- trail ---------- */
+  /* ---------- trail: soft motion streak ---------- */
   drawTrail() {
     const g = this.trailG; g.clear();
     const n = this.trail.length;
     if (n < 2) return;
-    const c1 = Phaser.Display.Color.ValueToColor(CFG.C.pink);
-    const c2 = Phaser.Display.Color.ValueToColor(this.ballGlow.tintTopLeft);
     for (let i = 1; i < n; i++) {
       const a = this.trail[i - 1], b = this.trail[i], t = i / (n - 1);
-      const c = Phaser.Display.Color.Interpolate.ColorWithColor(c1, c2, 100, t * 100);
-      const col = Phaser.Display.Color.GetColor(c.r, c.g, c.b);
-      g.lineStyle(Math.max(1, b.w * t * 2.4), col, t * 0.16); g.lineBetween(a.x, a.y, b.x, b.y);
-      g.lineStyle(Math.max(1, b.w * t * 0.9), col, t * 0.85); g.lineBetween(a.x, a.y, b.x, b.y);
+      g.lineStyle(Math.max(1, b.w * t * 1.6), 0xffffff, t * 0.12); g.lineBetween(a.x, a.y, b.x, b.y);
+      g.lineStyle(Math.max(1, b.w * t * 0.6), 0xffffff, t * 0.45); g.lineBetween(a.x, a.y, b.x, b.y);
     }
   }
 
   update(time, delta) {
     this.keeper.update(delta);
-
-    this.board.x -= delta * 0.035;
-    if (this.board.x <= -this.boardUnit) this.board.x += this.boardUnit;
 
     if (this.state === 'flight') this.stepFlight();
 
@@ -763,10 +963,6 @@ class GameScene extends Phaser.Scene {
     }
     if (this.trail.length > 26 || (this.state !== 'flight' && this.trail.length)) this.trail.shift();
     this.drawTrail();
-
-    const size = this.ball.displayWidth;
-    this.ballGlow.setPosition(this.ball.x, this.ball.y).setDisplaySize(size * 2.8, size * 2.8)
-      .setAlpha((this.state === 'flight' ? 0.55 : 0.25) * this.ball.alpha);
   }
 }
 
@@ -781,34 +977,39 @@ class GameOverScene extends Phaser.Scene {
     const { W, H, C } = CFG;
     const { goals = 0, saved = 0, missed = 0, results = [] } = data;
 
-    const dim = this.add.rectangle(0, 0, W, H, 0x03050b, 0.8).setOrigin(0).setAlpha(0);
+    const dim = this.add.rectangle(0, 0, W, H, 0x05060a, 0.78).setOrigin(0).setAlpha(0);
     this.tweens.add({ targets: dim, alpha: 1, duration: 300 });
 
     const panel = this.add.container(240, 450).setAlpha(0);
     const g = this.add.graphics();
-    [[14, 0.05], [8, 0.12]].forEach(([w, a]) => { g.lineStyle(w, C.cyan, a); g.strokeRoundedRect(-190, -235, 380, 470, 28); });
-    g.fillStyle(0x0b1226, 0.97); g.fillRoundedRect(-190, -235, 380, 470, 28);
-    g.lineStyle(2, C.cyan, 0.8); g.strokeRoundedRect(-190, -235, 380, 470, 28);
+    g.fillStyle(0x000000, 0.5); g.fillRoundedRect(-184, -229, 380, 470, 22);
+    g.fillStyle(0x14171d, 0.98); g.fillRoundedRect(-190, -235, 380, 470, 22);
+    g.lineStyle(1, 0xffffff, 0.1); g.strokeRoundedRect(-190, -235, 380, 470, 22);
+    // green-white-green stripe
+    g.fillStyle(0x008751, 1); g.fillRect(-60, -235, 40, 5); g.fillRect(20, -235, 40, 5);
+    g.fillStyle(0xffffff, 1); g.fillRect(-20, -235, 40, 5);
     panel.add(g);
 
-    const ratings = ['KEEPER WINS', 'KEEPER WINS', 'KEEP PRACTICING', 'SOLID SHOOTING', 'CLINICAL', 'PERFECT! LEGEND STATUS'];
-    const title = txt(this, 0, -195, 'FULL TIME', 18, C.pink).setOrigin(0.5).setShadow(0, 0, hex(C.pink), 12, true, true);
-    const score = txt(this, 0, -120, `0/${CFG.SHOTS}`, 92, C.white).setOrigin(0.5).setShadow(0, 0, hex(C.lime), 22, true, true);
-    const rating = txt(this, 0, -50, ratings[goals], 20, C.cyan).setOrigin(0.5);
-    const mg = this.add.graphics();
-    drawMarkers(mg, -56, -5, results, -1, 28, 9);
-    panel.add([title, score, rating, mg]);
+    const ratings = ['KEEPER RUN AM', 'KEEPER RUN AM', 'E NEVER REACH', 'YOU TRY!', 'AGBA BALLER', 'STREET PENALTY KING!'];
+    const title = txt(this, 0, -200, 'FULL TIME', 13, C.muted).setOrigin(0.5);
+    const score = pop(this, 0, -122, `0/${CFG.SHOTS}`, 96, C.white, { stroke: hex(C.ink), strokeThickness: 8 })
+      .setOrigin(0.5).setShadow(6, 6, hex(C.ink), 0, true, true);
+    const rating = pop(this, 0, -46, ratings[goals], 26, C.gold).setOrigin(0.5);
+    const bg = this.add.graphics();
+    drawBadges(bg, 0, 2, results);
+    panel.add([title, score, rating, bg]);
 
-    [['GOALS', goals, C.lime, -105], ['SAVED', saved, C.yellow, 0], ['MISSED', missed, C.red, 105]].forEach(([label, val, col, x]) => {
-      panel.add(txt(this, x, 55, String(val), 36, col).setOrigin(0.5).setShadow(0, 0, hex(col), 12, true, true));
-      panel.add(txt(this, x, 87, label, 12, C.muted).setOrigin(0.5));
+    [['GOALS', goals, C.green, -105], ['SAVED', saved, C.gold, 0], ['MISSED', missed, C.red, 105]].forEach(([label, val, col, x]) => {
+      panel.add(pop(this, x, 62, String(val), 38, col).setOrigin(0.5));
+      panel.add(txt(this, x, 94, label, 10, C.muted).setOrigin(0.5));
     });
 
-    const btn = this.add.container(0, 165);
-    const bg = this.add.graphics();
-    bg.fillStyle(C.lime, 0.18); bg.fillRoundedRect(-128, -36, 256, 72, 36);
-    bg.fillStyle(C.lime, 1); bg.fillRoundedRect(-120, -30, 240, 60, 30);
-    btn.add([bg, txt(this, 0, 0, 'PLAY AGAIN', 22, C.ink).setOrigin(0.5)]);
+    const btn = this.add.container(0, 168);
+    const bb = this.add.graphics();
+    bb.fillStyle(C.ink, 1); bb.fillRoundedRect(-116, -26, 240, 60, 12);
+    bb.fillStyle(C.gold, 1); bb.fillRoundedRect(-120, -30, 240, 60, 12);
+    bb.lineStyle(3, C.ink, 1); bb.strokeRoundedRect(-120, -30, 240, 60, 12);
+    btn.add([bb, pop(this, 0, 0, 'PLAY AGAIN', 26, C.ink).setOrigin(0.5)]);
     panel.add(btn);
 
     // count-up score
@@ -820,7 +1021,7 @@ class GameOverScene extends Phaser.Scene {
     this.tweens.add({ targets: panel, alpha: 1, y: 410, duration: 500, ease: 'Back.easeOut' });
 
     const restart = () => this.scene.start('Game');
-    const zone = this.add.zone(240, 410 + 165, 240, 60).setInteractive({ useHandCursor: true });
+    const zone = this.add.zone(240, 410 + 168, 240, 60).setInteractive({ useHandCursor: true });
     zone.on('pointerover', () => this.tweens.add({ targets: btn, scale: 1.06, duration: 120 }));
     zone.on('pointerout', () => this.tweens.add({ targets: btn, scale: 1, duration: 120 }));
     zone.on('pointerup', restart);
@@ -838,14 +1039,17 @@ function boot() {
     parent: 'game',
     width: CFG.W * CFG.S,
     height: CFG.H * CFG.S,
-    backgroundColor: '#04060d',
+    backgroundColor: '#0b0d12',
     scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
     input: { activePointers: 1 },
     scene: [GameScene, GameOverScene],
   });
 }
 const fontReady = document.fonts
-  ? Promise.race([document.fonts.load('40px "Russo One"'), new Promise(r => setTimeout(r, 1500))])
+  ? Promise.race([
+      Promise.all([document.fonts.load('40px "Anton"'), document.fonts.load('900 20px "Montserrat"')]),
+      new Promise(r => setTimeout(r, 1500)),
+    ])
   : Promise.resolve();
 fontReady.then(boot, boot);
 </script>
