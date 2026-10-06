@@ -12,13 +12,47 @@
                touch-action: none; user-select: none; -webkit-user-select: none; }
   #game { width: 100vw; height: 100vh; }
   canvas { display: block; }
+
+  /* nickname dialog: a real input so phone keyboards work */
+  #nick { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px;
+          background: rgba(5, 8, 15, 0.55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); z-index: 10; }
+  #nick[hidden] { display: none; }
+  .nick-card { width: min(360px, 100%); box-sizing: border-box; padding: 22px 20px 18px; border-radius: 20px;
+               background: rgba(21, 38, 58, 0.92); border: 1.5px solid rgba(255, 255, 255, 0.35);
+               font-family: Montserrat, Arial, sans-serif; color: #fff; text-align: center;
+               user-select: text; -webkit-user-select: text; }
+  .nick-card h2 { margin: 0 0 6px; font: 400 28px/1.1 Anton, Impact, sans-serif; letter-spacing: 0.5px; }
+  .nick-card p { margin: 0 0 14px; font-size: 12px; font-weight: 700; opacity: 0.8; line-height: 1.4; }
+  .nick-card input { width: 100%; box-sizing: border-box; padding: 12px 14px; border-radius: 12px; border: 2px solid #3ddc97;
+                     background: #0b1622; color: #fff; font: 900 20px Montserrat, Arial, sans-serif; text-align: center;
+                     text-transform: uppercase; outline: none; }
+  .nick-card .err { min-height: 16px; margin: 8px 0 4px; color: #f5b700; font-size: 12px; font-weight: 900; opacity: 1; }
+  .nick-card .row { display: flex; gap: 10px; margin-top: 6px; }
+  .nick-card button { flex: 1; padding: 12px 8px; border-radius: 12px; border: 3px solid #0b0d12; cursor: pointer;
+                      font: 400 20px Anton, Impact, sans-serif; letter-spacing: 0.5px; box-shadow: 4px 4px 0 #0b0d12; }
+  .nick-card .go { background: #f5b700; color: #0b0d12; }
+  .nick-card .cancel { background: #2b3038; color: #fff; flex: 0 0 34%; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.80.1/phaser.min.js"></script>
 <!-- PeerJS: live matches between two browsers (optional; the game works without it) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+<!-- Supabase: global leaderboard (optional; the game works offline without it) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 </head>
 <body>
 <div id="game"></div>
+<div id="nick" hidden>
+  <form id="nick-form" class="nick-card" autocomplete="off">
+    <h2 id="nick-title">YOUR NICKNAME</h2>
+    <p>Your name on the global leaderboard. 2 to 12 letters or numbers.</p>
+    <input id="nick-input" maxlength="12" autocapitalize="characters" spellcheck="false" aria-label="Nickname">
+    <p id="nick-error" class="err" role="alert"></p>
+    <div class="row">
+      <button type="button" id="nick-cancel" class="cancel">BACK</button>
+      <button type="submit" class="go">LET'S GO</button>
+    </div>
+  </form>
+</div>
 <script>
 'use strict';
 
@@ -309,15 +343,61 @@ function jerseyBack(scene, kit) {
   return c;
 }
 
-// Roast / praise lines for the match certificate, indexed by goals scored. {F} = faction name.
-const VERDICTS = [
-  ['Zero?! {F} don disown you. Go practice for gutter side.', 'Five shots, zero goals. Even the slipper by the post get better aim.'],
-  ['One goal? The keeper basically collected salary for free.', 'You score one, then you dey find excuse. {F} no go gree.'],
-  ['E never reach. The keeper don screenshot this result already.', 'Two goals... {F} fans don start dey whisper.'],
-  ['You try! Solid finishing, but the keeper still get bragging rights.', 'Three goals. Respectable. Not legendary, but respectable.'],
-  ['Agba baller! One miss no fit spoil the vibe. {F} dey proud.', 'Four goals! Small more and you for collect the crown.'],
-  ['Flawless! {F} don crown you STREET PENALTY KING.', 'Five from five. Keepers for this street don hear your name.'],
+// Certificate commentary: written for BOTH the score and the faction (+ the opponent you picked).
+// {ME} = your faction, {OPP} = opponent faction, {HERO} = your faction's figurehead, {CHANT} = your faction's first chant.
+const HEROES = {
+  cr7: 'CR7', messi: 'Messi', neymar: 'Neymar', mbappe: 'Mbappé', haaland: 'Haaland', vini: 'Vini',
+  osimhen: 'Osimhen', lookman: 'Lookman', okocha: 'Jay-Jay', kanu: 'Papilo',
+  wizkid: 'Starboy', davido: 'OBO', outsiders: 'the African Giant', afrorave: 'Rema', ololade: 'Asake',
+  tems: 'Tems', ayra: 'Ayra', kizz: 'Vado', fireboy: 'Fireboy', ybnl: 'Baddo', seyi: 'Seyi Vibez',
+  shallipopi: 'Pluto', odumodu: 'Odumodu',
+  mainland: 'Yaba', island: 'Lekki', ikeja: 'Ikeja', ajegunle: 'AJ City', calabar: 'Calabar',
+  jos: 'Jos', ibadan: 'Ibadan', abeokuta: 'Abeokuta', phoilers: 'Garden City', abuja: 'Abuja',
+};
+
+// Hand-written lines for specific faction + score combos (always used when present)
+const ROAST_OVERRIDES = {
+  'wizkid:0': 'You just disgraced Starboy in front of {OPP} fans. Go back to playing Ludo!',
+  'wizkid:1': 'One goal? Starboy no go claim this one. {OPP} fans are already making memes.',
+  'wizkid:5': 'MACHALA! Starboy finish, five times. {OPP} goalies need prayers.',
+  'davido:0': 'Zero?! OBO no go like this one. {OPP} fans are laughing in 001 languages.',
+  'davido:5': "001 POWER! {OPP} goalies couldn't catch a single shot!",
+  'cr7:0': 'Siuuu-less kick! {OPP} fans are currently using your score as evidence on Twitter.',
+  'cr7:1': 'One goal and no Siuuu. {OPP} fans are already typing the thread.',
+  'cr7:5': 'SIUUU x5! {OPP} fans are deleting their tweets one by one.',
+  'messi:0': "Even Messi's left foot can't save this. {OPP} fans are printing T-shirts with your score.",
+  'messi:5': 'GOAT behaviour! The {OPP} keeper is still dizzy from that left foot.',
+};
+
+// Fallback templates by goals scored (0-5), two each
+const ROASTS = [
+  ['You just disgraced {HERO} in front of {OPP} fans. Go back to playing Ludo!',
+    'Zero from five?! {OPP} fans don already make your score their WhatsApp status.'],
+  ['One goal? The {OPP} keeper basically collected salary for free. {HERO} is disappointed.',
+    'One out of five. The {ME} group chat don go quiet.'],
+  ['Two goals... {OPP} fans don start dey whisper. {HERO} expects more.',
+    'E never reach. The {OPP} keeper don screenshot this result already.'],
+  ['You try! {HERO} would nod, but {OPP} fans still get small bragging rights.',
+    'Three goals. Respectable. Not legendary, but {ME} fans will take it.'],
+  ['Agba baller! The {OPP} keeper is still looking for the ball. {HERO} dey proud.',
+    'Four from five! One more and {OPP} fans for delete their tweets.'],
+  ["{CHANT} {OPP} goalies couldn't catch a single shot!",
+    'Flawless! {ME} don crown you STREET PENALTY KING. {OPP} fans, shhh.'],
 ];
+
+function roastFor(f, o, goals) {
+  const line = ROAST_OVERRIDES[`${f.id}:${goals}`] || Phaser.Utils.Array.GetRandom(ROASTS[goals]);
+  return line
+    .replace(/\{ME\}/g, f.name).replace(/\{OPP\}/g, o.name)
+    .replace(/\{HERO\}/g, HEROES[f.id] || f.name).replace(/\{CHANT\}/g, f.chants[0]);
+}
+
+// Certificate stamp by score: red shame (0-1), gold glory (4-5), something in between
+function stampFor(goals) {
+  if (goals <= 1) return { kind: 'red', label: Phaser.Utils.Array.GetRandom(['DISGRACE TO FC \u{1F921}', 'SAPA FOOTBALL ❌']) };
+  if (goals >= 4) return { kind: 'gold', label: Phaser.Utils.Array.GetRandom(['AGBA BALLER \u{1F3C6}', 'NO LELE \u{1F525}']) };
+  return goals === 3 ? { kind: 'green', label: 'YOU TRY \u{1F44D}' } : { kind: 'orange', label: 'E NEVER REACH \u{1F62C}' };
+}
 
 // Head-to-head verdicts. {OPP} = opponent's name.
 const DUEL_VERDICTS = {
@@ -344,6 +424,8 @@ function cleanResults(arr) {
   return Array.isArray(arr) ? arr.filter(r => r === 'goal' || r === 'save' || r === 'miss').slice(0, CFG.SHOTS) : [];
 }
 function askName(force = false) {
+  const p = typeof Profile !== 'undefined' && Profile.get();
+  if (p && !force) return p.nickname;
   let name = Store.getName();
   if (!name || force) {
     const v = window.prompt('Your name (your friends will see it):', name || '');
@@ -447,6 +529,149 @@ const Net = {
     try { if (peer) peer.destroy(); } catch (e) { /* ignore */ }
   },
 };
+
+/* ---------- Global leaderboard (Supabase) ---------- */
+// Public project settings. The anon key is meant to be shipped in web apps: the database only exposes
+// the validated spk_* functions in supabase/schema.sql. Never put the service-role key here.
+const SUPABASE = {
+  url: 'https://nreumhqjtaycznureifu.supabase.co',
+  anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5yZXVtaHFqdGF5Y3pudXJlaWZ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEzMDUwMDEsImV4cCI6MjEwNjg4MTAwMX0.IehQlxtF5iJq0eOu-aWT_bM_jOawCElsUNH6NbxCNYI',   // public anon key
+};
+
+const BAD_NAME = /(FUCK|SHIT|BITCH|CUNT|NIGGA|NIGGER|PUSSY|ASHAWO|OLOSHO|PORN|WHORE|RAPE)/;
+const LOCK_MS = 30 * 864e5;
+
+// The player's identity on this phone: nickname + represented faction (locked 30 days, one free switch)
+const Profile = {
+  get() {
+    try {
+      const p = JSON.parse(Store.read('spk.profile') || 'null');
+      return p && FACTIONS[p.faction] && p.nickname ? p : null;
+    } catch (e) { return null; }
+  },
+  set(p) { Store.write('spk.profile', JSON.stringify(p)); Store.set(p.faction); Store.setName(p.nickname); },
+  fresh(nickname, faction) { return { nickname, faction, lockedUntil: Date.now() + LOCK_MS, switchesLeft: 1 }; },
+  fromRow(r) {
+    return { nickname: cleanName(r.nickname), faction: r.faction, lockedUntil: Date.parse(r.locked_until), switchesLeft: r.switches_left };
+  },
+  locked(p) { return !!p && Date.now() < p.lockedUntil; },
+  // same rules as spk_switch_faction(), for when the leaderboard isn't connected
+  localSwitch(p, faction) {
+    if (this.locked(p)) return p.switchesLeft > 0 ? { ...p, faction, switchesLeft: p.switchesLeft - 1 } : null;
+    return { ...p, faction, lockedUntil: Date.now() + LOCK_MS, switchesLeft: 1 };
+  },
+  lockLabel(p) {
+    if (!p) return '';
+    if (!this.locked(p)) return 'SWITCH FACTION';
+    if (p.switchesLeft > 0) return 'SWITCH FACTION (1 FREE SWITCH)';
+    return `LOCKED UNTIL ${new Date(p.lockedUntil).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }).toUpperCase()}`;
+  },
+};
+
+const Board = {
+  client: null,
+  ready: null,
+  configured() { return !!(SUPABASE.url && SUPABASE.anonKey && window.supabase && window.supabase.createClient); },
+  init() {
+    if (this.ready) return this.ready;
+    if (!this.configured()) { this.ready = Promise.resolve(false); return this.ready; }
+    this.client = window.supabase.createClient(SUPABASE.url, SUPABASE.anonKey, {
+      auth: { persistSession: true, autoRefreshToken: true, storageKey: 'spk.auth' },
+    });
+    this.ready = (async () => {
+      const { data } = await this.client.auth.getSession();
+      if (!data.session) {
+        const { error } = await this.client.auth.signInAnonymously();
+        if (error) throw error;
+      }
+      return true;
+    })().catch(e => { console.warn('Leaderboard offline:', e && e.message); this.ready = null; return false; });
+    return this.ready;
+  },
+  async rpc(fn, args = {}) {
+    if (!(await this.init())) throw new Error('offline');
+    const { data, error } = await this.client.rpc(fn, args);
+    if (error) throw new Error(error.message || 'request failed');
+    return data;
+  },
+  register(nickname, faction) { return this.rpc('spk_register', { p_nickname: nickname, p_faction: faction }); },
+  switchFaction(faction) { return this.rpc('spk_switch_faction', { p_faction: faction }); },
+  me() { return this.rpc('spk_me'); },
+  board(scope) { return this.rpc('spk_board', { p_scope: scope }); },
+  top(scope) { return this.rpc('spk_top_players', { p_scope: scope }); },
+  async submit(opponent, mode, results) {
+    const args = { p_opponent: opponent, p_mode: mode, p_results: results.map(r => r[0]).join('') };
+    try {
+      return await this.rpc('spk_submit', args);
+    } catch (e) {
+      const p = Profile.get();
+      if (!p || !/not registered/i.test(e.message)) throw e;
+      await this.register(p.nickname, p.faction);   // first match after registering offline
+      return this.rpc('spk_submit', args);
+    }
+  },
+  // never rejects: resolves to the server result, { offline: true } or { error }
+  submitSafe(opponent, mode, results) {
+    if (!this.configured()) return Promise.resolve({ offline: true });
+    return this.submit(opponent, mode, results).catch(e => ({ error: (e && e.message) || 'error' }));
+  },
+  // on load: the server's profile wins; a profile made offline gets registered
+  async sync() {
+    if (!this.configured()) return;
+    try {
+      const row = await this.me();
+      const p = Profile.get();
+      if (row) Profile.set(Profile.fromRow(row));
+      else if (p) Profile.set(Profile.fromRow(await this.register(p.nickname, p.faction)));
+    } catch (e) { /* keep the local profile */ }
+  },
+};
+
+// Nickname dialog (real HTML input so phone keyboards work properly)
+const NickModal = {
+  isOpen: false,
+  open({ value = '', error = '', faction = null } = {}) {
+    const el = document.getElementById('nick');
+    const form = document.getElementById('nick-form');
+    const input = document.getElementById('nick-input');
+    const err = document.getElementById('nick-error');
+    const title = document.getElementById('nick-title');
+    title.textContent = faction ? `REPRESENTING ${faction.name}` : 'YOUR NICKNAME';
+    title.style.color = faction ? hex(faction.accent) : '';
+    input.value = value;
+    err.textContent = error;
+    el.hidden = false;
+    this.isOpen = true;
+    setTimeout(() => input.focus(), 60);
+    return new Promise(resolve => {
+      const done = v => {
+        el.hidden = true;
+        this.isOpen = false;
+        form.onsubmit = null;
+        document.getElementById('nick-cancel').onclick = null;
+        resolve(v);
+      };
+      form.onsubmit = e => {
+        e.preventDefault();
+        const v = cleanName(input.value);
+        if (v.length < 2) { err.textContent = 'Use 2 to 12 letters or numbers.'; return; }
+        if (BAD_NAME.test(v)) { err.textContent = 'Pick a different nickname.'; return; }
+        done(v);
+      };
+      document.getElementById('nick-cancel').onclick = () => done(null);
+    });
+  },
+};
+
+// Rivalry pairs for the leaderboard: every faction with its default rival, de-duplicated
+function rivalryPairs() {
+  const seen = new Set(), pairs = [];
+  TABS.forEach(t => t.sections.forEach(s => s.rows.forEach(r => r.forEach(id => {
+    const key = [id, FACTIONS[id].rival].sort().join('|');
+    if (!seen.has(key)) { seen.add(key); pairs.push([id, FACTIONS[id].rival]); }
+  }))));
+  return pairs;
+}
 
 // Draw a faction crest as a container (base size 60px, scaled to `size`)
 function factionBadge(scene, x, y, f, size = 60) {
@@ -952,6 +1177,8 @@ class GameScene extends Phaser.Scene {
         left: this.mode === 'live' && !this.oppDone,
       };
     }
+    // count it for your faction on the global leaderboard (resolves even when offline)
+    data.submission = Board.submitSafe(this.opp.id, this.mode, this.results);
     this.scene.launch('Certificate', data);
   }
 
@@ -1797,16 +2024,18 @@ function menuToast(scene, msg, y = 640) {
 class FactionScene extends Phaser.Scene {
   constructor() { super('Faction'); }
 
-  init(data) { this.invite = (data && data.invite) || null; }
+  // invite: from a shared link; switching: changing your represented faction
+  init(data) { this.invite = (data && data.invite) || null; this.switching = !!(data && data.switching); }
 
   create() {
     setupCamera(this);
     const { C } = CFG;
-    this.side = Store.get() || (FACTIONS[this.registry.get('faction')] ? this.registry.get('faction') : null);
+    this.profile = Profile.get();
+    this.side = this.profile ? this.profile.faction : Store.get();
     const savedOpp = Store.getOpp();
     this.opp = savedOpp && savedOpp !== this.side ? savedOpp : (this.side ? FACTIONS[this.side].rival : null);
-    this.step = 'side';
     this.buttons = [];
+    this.links = [];
 
     const { root, g } = glassPanel(this, 'GOAT SUPREMACY: LAGOS STREETS');
     this.root = root;
@@ -1830,29 +2059,35 @@ class FactionScene extends Phaser.Scene {
     this.detail = this.add.container(0, 0);
     root.add([this.list, this.detail]);
     this.listZones = [];
-    root.add(txt(this, 240, 722, 'Fan-made game. Not affiliated with or endorsed by any player, artist or club.', 9, C.white,
-      { align: 'center', wordWrap: { width: 380 } }).setOrigin(0.5).setAlpha(0.6));
+    root.add(txt(this, 240, 730, 'Fan-made game. Not affiliated with or endorsed by any player, artist or club.', 9, C.white,
+      { align: 'center', wordWrap: { width: 380 } }).setOrigin(0.5).setAlpha(0.55));
 
     this.buildList();
-    this.setStep('side');
-    this.input.keyboard?.on('keydown-ENTER', () => this.primary && this.primary());
+    this.setStep(!this.profile || this.switching ? 'side' : 'opponent');
+    this.input.keyboard?.on('keydown-ENTER', () => {
+      if (!NickModal.isOpen && !this.scene.isActive('Leaderboard') && this.primary) this.primary();
+    });
   }
 
   tabOf(id) { return TABS.findIndex(t => t.sections.some(s => s.rows.some(r => r.includes(id)))); }
 
   setStep(step) {
     this.step = step;
-    const inv = this.invite;
+    const inv = this.invite, f = FACTIONS[this.side];
+    let text;
     if (step === 'side') {
-      this.stepText.setText(
-        inv && inv.type === 'room' ? `JOINING ROOM ${inv.code}: PICK YOUR SIDE`
-          : inv && inv.type === 'challenge' ? `${inv.ch.n} SCORED ${goalsOf(inv.ch.r)}/${CFG.SHOTS}: PICK YOUR SIDE`
-          : 'STEP 1: PICK YOUR SIDE');
+      text = this.switching ? 'SWITCH: WHO ARE YOU REPRESENTING NOW?'
+        : inv && inv.type === 'room' ? `ROOM ${inv.code}: WHO ARE YOU REPRESENTING?`
+        : inv && inv.type === 'challenge' ? `${inv.ch.n} SCORED ${goalsOf(inv.ch.r)}/${CFG.SHOTS}: WHO DO YOU REPRESENT?`
+        : 'WHO ARE YOU REPRESENTING?';
     } else {
-      this.stepText.setText('STEP 2: PICK YOUR OPPONENT');
+      text = inv && inv.type === 'room' ? `JOINING ROOM ${inv.code} FOR ${f.name}`
+        : inv && inv.type === 'challenge' ? `${inv.ch.n} (${FACTIONS[inv.ch.f].name}) SCORED ${goalsOf(inv.ch.r)}/${CFG.SHOTS}`
+        : `REPRESENTING ${f.name} · PICK YOUR OPPONENT`;
       const t = this.tabOf(this.opp);
-      if (t >= 0 && t !== this.tab) { this.tab = t; this.buildList(); }
+      if (!inv && t >= 0 && t !== this.tab) { this.tab = t; this.buildList(); }
     }
+    this.stepText.setText(text).setScale(1);
     this.stepText.setScale(Math.min(1, 360 / this.stepText.width));
     this.detailFor = null;
     this.buildButtons();
@@ -1862,29 +2097,49 @@ class FactionScene extends Phaser.Scene {
   buildButtons() {
     const { C } = CFG;
     this.buttons.forEach(b => b.remove());
+    this.links.forEach(l => { l.zone.destroy(); l.t.destroy(); l.ul.destroy(); });
     this.buttons = [];
+    this.links = [];
     const add = (x, w, label, fill, text, fn, size = 20) => {
-      const b = makeButton(this, x, 676, w, 50, label, fill, text, fn, size);
+      const b = makeButton(this, x, 660, w, 50, label, fill, text, fn, size);
       this.root.add(b);
       this.buttons.push(b);
       return b;
     };
     const inv = this.invite;
-    if (this.step === 'side' && inv && inv.type === 'room') {
+    if (this.step === 'side' && this.switching) {
+      add(130, 196, '‹ CANCEL', C.track, C.white, () => { this.switching = false; this.side = this.profile.faction; this.setStep('opponent'); });
+      this.sideBtn = add(350, 196, 'SWITCH', C.gold, C.ink, () => this.switchTo(), 18);
+      this.primary = () => this.switchTo();
+    } else if (this.step === 'side') {
+      this.sideBtn = add(240, 320, 'REPRESENT', C.gold, C.ink, () => this.represent(), 22);
+      this.primary = () => this.represent();
+    } else if (inv && inv.type === 'room') {
       add(240, 280, 'JOIN THE MATCH', C.gold, C.ink, () => this.joinRoom());
       this.primary = () => this.joinRoom();
-    } else if (this.step === 'side' && inv && inv.type === 'challenge') {
+    } else if (inv && inv.type === 'challenge') {
       add(240, 280, 'ACCEPT CHALLENGE', C.gold, C.ink, () => this.acceptChallenge());
       this.primary = () => this.acceptChallenge();
-    } else if (this.step === 'side') {
-      add(130, 196, 'PLAY A FRIEND', C.mint, C.ink, () => this.playFriend());
-      add(350, 196, 'PICK OPPONENT ›', C.gold, C.ink, () => this.side && this.setStep('opponent'));
-      this.primary = () => this.side && this.setStep('opponent');
     } else {
-      add(130, 196, '‹ BACK', C.track, C.white, () => this.setStep('side'));
+      add(130, 196, 'PLAY A FRIEND', C.mint, C.ink, () => this.playFriend());
       add(350, 196, 'KICK OFF', C.gold, C.ink, () => this.kickOff(), 24);
       this.primary = () => this.kickOff();
     }
+    // small links under the buttons
+    const showSwitch = this.step === 'opponent' && !inv && this.profile;
+    this.link(showSwitch ? 150 : 240, '\u{1F3C6} LEADERBOARD', () => this.scene.launch('Leaderboard'));
+    if (showSwitch) this.link(340, Profile.lockLabel(this.profile), () => this.startSwitch());
+  }
+
+  link(x, label, fn) {
+    const { C } = CFG;
+    const t = txt(this, x, 704, label, 11, C.white).setOrigin(0.5).setAlpha(0.8);
+    const ul = this.add.graphics();
+    ul.lineStyle(1, 0xffffff, 0.5); ul.lineBetween(x - t.width / 2, 713, x + t.width / 2, 713);
+    this.root.add([t, ul]);
+    const zone = this.add.zone(x, 704, t.width + 24, 26).setInteractive({ useHandCursor: true });
+    zone.on('pointerup', fn);
+    this.links.push({ t, ul, zone });
   }
 
   // (Re)build the section headers + matchup rows for the active tab
@@ -1945,7 +2200,8 @@ class FactionScene extends Phaser.Scene {
       this.side = id;
       if (this.opp === id || !this.opp) this.opp = FACTIONS[id].rival;
     } else {
-      if (id === this.side) { menuToast(this, "THAT'S YOUR SIDE: PICK SOMEONE ELSE", 548); return; }
+      if (this.invite) return;   // the opponent comes from the invite
+      if (id === this.side) { menuToast(this, "THAT'S YOUR FACTION: PICK SOMEONE ELSE", 548); return; }
       this.opp = id;
     }
     this.refresh();
@@ -1981,63 +2237,128 @@ class FactionScene extends Phaser.Scene {
       }
       ch.t.setColor(hex(sel ? (lum(f.accent) > 0.55 ? C.ink : C.white) : mine ? C.mint : C.white));
     }
-    this.buttons.forEach(b => b.setEnabled(this.step === 'side' ? !!this.side : !!(this.side && this.opp)));
+    const f = FACTIONS[this.side], o = FACTIONS[this.opp];
+    this.buttons.forEach(b => b.setEnabled(this.step === 'side' ? !!f : !!(f && o)));
+    if (this.step === 'side' && this.sideBtn && f) this.sideBtn.setLabel(this.switching ? `SWITCH TO ${f.name}` : `REPRESENT ${f.name} ›`);
 
     // details (rebuilt only when the pick changes)
     const key = `${this.step}:${this.side}:${this.opp}`;
     if (this.detailFor === key) return;
     this.detailFor = key;
     this.detail.removeAll(true);
-    const f = FACTIONS[this.side], o = FACTIONS[this.opp];
     if (!f) {
-      this.detail.add(txt(this, 240, 604, 'TAP A NAME TO PICK YOUR SIDE', 12, C.white).setOrigin(0.5).setAlpha(0.7));
+      this.detail.add(txt(this, 240, 596, 'TAP A NAME: YOUR GOALS COUNT FOR THEM ON THE GLOBAL LEADERBOARD', 11, C.white,
+        { align: 'center', wordWrap: { width: 360 } }).setOrigin(0.5).setAlpha(0.75));
       return;
     }
     if (this.step === 'side') {
-      const shirt = jerseyBack(this, kitOf(f)).setPosition(84, 604).setScale(0.5);
+      const shirt = jerseyBack(this, kitOf(f)).setPosition(84, 594).setScale(0.5);
       this.detail.add([
         shirt,
-        pop(this, 136, 578, f.name, 22, f.accent).setOrigin(0, 0.5),
-        txt(this, 136, 600, f.tagline, 10, C.white).setOrigin(0, 0.5).setAlpha(0.75),
-        txt(this, 136, 618, `YOUR JERSEY: ${kitOf(f).name} #${kitOf(f).num}`, 10, C.white).setOrigin(0, 0.5),
+        pop(this, 136, 570, f.name, 22, f.accent).setOrigin(0, 0.5),
+        txt(this, 136, 592, f.tagline, 10, C.white).setOrigin(0, 0.5).setAlpha(0.75),
+        txt(this, 136, 610, `YOUR JERSEY: ${kitOf(f).name} #${kitOf(f).num}`, 10, C.white).setOrigin(0, 0.5),
+        txt(this, 136, 626, 'LOCKED FOR 30 DAYS (ONE FREE SWITCH)', 9, C.mint).setOrigin(0, 0.5),
       ]);
       this.tweens.add({ targets: shirt, scale: { from: 0.42, to: 0.5 }, duration: 160, ease: 'Back.easeOut' });
+    } else if (this.invite) {
+      const inv = this.invite;
+      this.detail.add([
+        jerseyBack(this, kitOf(f)).setPosition(84, 594).setScale(0.5),
+        pop(this, 136, 576, f.name, 22, f.accent).setOrigin(0, 0.5),
+        txt(this, 136, 600, inv.type === 'room' ? 'YOUR GOALS COUNT FOR YOUR FACTION' : `BEAT ${goalsOf(inv.ch.r)}/${CFG.SHOTS} TO WIN`, 10, C.white).setOrigin(0, 0.5),
+      ]);
     } else {
-      const mineShirt = jerseyBack(this, kitOf(f)).setPosition(70, 604).setScale(0.4);
-      const theirShirt = jerseyBack(this, kitOf(o)).setPosition(182, 604).setScale(0.4);
+      const mineShirt = jerseyBack(this, kitOf(f)).setPosition(70, 594).setScale(0.4);
+      const theirShirt = jerseyBack(this, kitOf(o)).setPosition(182, 594).setScale(0.4);
       this.detail.add([
         mineShirt, theirShirt,
-        pop(this, 126, 604, 'VS', 20, C.white).setOrigin(0.5),
-        txt(this, 230, 578, 'OPPONENT', 9, C.white).setOrigin(0, 0.5).setAlpha(0.7),
-        pop(this, 230, 598, o.name, 20, o.accent).setOrigin(0, 0.5),
-        txt(this, 230, 620, 'THEIR KEEPER WEARS THIS KIT', 9, C.mint).setOrigin(0, 0.5),
+        pop(this, 126, 594, 'VS', 20, C.white).setOrigin(0.5),
+        txt(this, 230, 568, 'OPPONENT', 9, C.white).setOrigin(0, 0.5).setAlpha(0.7),
+        pop(this, 230, 588, o.name, 20, o.accent).setOrigin(0, 0.5),
+        txt(this, 230, 610, 'THEIR KEEPER WEARS THIS KIT', 9, C.mint).setOrigin(0, 0.5),
       ]);
       this.tweens.add({ targets: theirShirt, scale: { from: 0.34, to: 0.4 }, duration: 160, ease: 'Back.easeOut' });
     }
   }
 
+  // First visit: pick a side, choose a nickname, register on the leaderboard
+  async represent() {
+    if (!FACTIONS[this.side] || this.busy) return;
+    this.busy = true;
+    const f = FACTIONS[this.side];
+    let error = '', value = Store.getName() || '';
+    for (;;) {
+      const name = await NickModal.open({ value, error, faction: f });
+      if (name === null) { this.busy = false; return; }
+      value = name;
+      try {
+        const row = Board.configured() ? await Board.register(name, this.side) : null;
+        this.profile = row ? Profile.fromRow(row) : Profile.fresh(name, this.side);
+        break;
+      } catch (e) {
+        if (/nickname/i.test(e.message)) { error = "That nickname isn't allowed. Try another."; continue; }
+        this.profile = Profile.fresh(name, this.side);   // offline: keep playing, it registers on the next visit
+        break;
+      }
+    }
+    Profile.set(this.profile);
+    this.side = this.profile.faction;
+    this.busy = false;
+    if (!this.sys.isActive()) return;
+    if (this.invite && this.invite.type === 'room') this.joinRoom();
+    else if (this.invite && this.invite.type === 'challenge') this.acceptChallenge();
+    else this.setStep('opponent');
+  }
+
+  startSwitch() {
+    if (!this.profile) return;
+    if (Profile.locked(this.profile) && this.profile.switchesLeft <= 0) {
+      menuToast(this, `YOU'RE LOCKED IN WITH ${FACTIONS[this.profile.faction].name} UNTIL ${Profile.lockLabel(this.profile).replace('LOCKED UNTIL ', '')}`, 548);
+      return;
+    }
+    this.switching = true;
+    this.setStep('side');
+  }
+
+  async switchTo() {
+    if (!FACTIONS[this.side] || this.busy) return;
+    if (this.side === this.profile.faction) { this.switching = false; this.setStep('opponent'); return; }
+    this.busy = true;
+    try {
+      const row = Board.configured() ? await Board.switchFaction(this.side) : null;
+      const next = row ? Profile.fromRow(row) : Profile.localSwitch(this.profile, this.side);
+      if (!next) throw new Error('locked');
+      this.profile = next;
+      Profile.set(next);
+      this.switching = false;
+      if (this.opp === this.side) this.opp = FACTIONS[this.side].rival;
+      this.setStep('opponent');
+    } catch (e) {
+      menuToast(this, /locked/i.test(e.message) ? 'FACTION IS LOCKED FOR NOW' : 'COULD NOT SWITCH: CHECK YOUR INTERNET', 548);
+    }
+    this.busy = false;
+  }
+
   kickOff() {
     if (!this.side || !this.opp) return;
-    Store.set(this.side); Store.setOpp(this.opp);
+    Store.setOpp(this.opp);
     this.scene.get('Game').startMatch(this.side, this.opp, 'solo');
     this.scene.stop();
   }
 
   playFriend() {
     if (!this.side) return;
-    Store.set(this.side);
     this.scene.start('Lobby', { side: this.side });
   }
 
   joinRoom() {
     if (!this.side) return;
-    Store.set(this.side);
     this.scene.start('Lobby', { side: this.side, join: this.invite.code });
   }
 
   acceptChallenge() {
     if (!this.side) return;
-    Store.set(this.side);
     const ch = this.invite.ch;
     this.scene.get('Game').startMatch(this.side, ch.f, 'challenge', { name: ch.n, results: ch.r });
     this.scene.stop();
@@ -2061,8 +2382,6 @@ class LobbyScene extends Phaser.Scene {
     this.nameText = txt(this, 240, 151, '', 12, C.mint).setOrigin(0.5);
     root.add(this.nameText);
     this.setNameText();
-    const nz = this.add.zone(240, 151, 300, 28).setInteractive({ useHandCursor: true });
-    nz.on('pointerup', () => { this.name = askName(true); this.setNameText(); });
 
     this.view = this.add.container(0, 0);
     root.add(this.view);
@@ -2080,7 +2399,7 @@ class LobbyScene extends Phaser.Scene {
     if (this.joinCode) this.join(this.joinCode); else this.showMenu();
   }
 
-  setNameText() { this.nameText.setText(`PLAYING AS ${this.name}  ·  TAP TO CHANGE`); }
+  setNameText() { this.nameText.setText(`PLAYING AS ${this.name} FOR ${FACTIONS[this.side].name}`); }
 
   clearView() {
     this.view.removeAll(true);
@@ -2229,7 +2548,6 @@ class LobbyScene extends Phaser.Scene {
   startChallenge() {
     Net.leave();
     const opp = Store.getOpp() && Store.getOpp() !== this.side ? Store.getOpp() : FACTIONS[this.side].rival;
-    this.registry.set('shareChallenge', true);
     this.scene.get('Game').startMatch(this.side, opp, 'solo');
     this.scene.stop();
   }
@@ -2293,16 +2611,37 @@ class CertificateScene extends Phaser.Scene {
     return b;
   }
 
-  addLink(y, label, fn) {
+  addLink(y, label, fn, x = 240) {
     const { C } = CFG;
-    const t = txt(this, 240, y, label, 11, C.muted).setOrigin(0.5);
+    const t = txt(this, x, y, label, 11, C.muted).setOrigin(0.5);
     const ul = this.add.graphics();
-    ul.lineStyle(1, C.muted, 1); ul.lineBetween(240 - t.width / 2, y + 9, 240 + t.width / 2, y + 9);
+    ul.lineStyle(1, C.muted, 1); ul.lineBetween(x - t.width / 2, y + 9, x + t.width / 2, y + 9);
     this.root.add([t, ul]);
-    const z = this.add.zone(240, y, t.width + 30, 28).setInteractive({ useHandCursor: true });
+    const z = this.add.zone(x, y, t.width + 30, 28).setInteractive({ useHandCursor: true });
     z.on('pointerover', () => t.setColor('#ffffff'));
     z.on('pointerout', () => t.setColor(hex(C.muted)));
     z.on('pointerup', fn);
+  }
+
+  // "+4 FOR 30BG · #3 THIS WEEK" once the leaderboard has the match
+  showPoints(textObj) {
+    const sub = this.data_.submission;
+    if (!sub || !Board.configured()) return;
+    sub.then(res => {
+      if (!this.sys.isActive() || !textObj.active) return;
+      const { C } = CFG;
+      const f = FACTIONS[res.faction] || this.f;
+      let s, ok = false;
+      if (res.offline) return;
+      if (res.error) s = /too fast/i.test(res.error) ? 'NOT COUNTED: TOO FAST' : 'LEADERBOARD OFFLINE: NOT COUNTED';
+      else if (!res.counted) s = 'DAILY LIMIT REACHED: PRACTICE MATCH';
+      else {
+        ok = true;
+        s = `+${res.goals} FOR ${f.name} · ${res.rank ? `#${res.rank} THIS WEEK` : 'UNRANKED (NEEDS 10 MATCHES)'}`;
+      }
+      textObj.setText(s).setColor(hex(ok ? C.mint : C.muted)).setFontSize(ok ? 12 : 10).setScale(1);
+      textObj.setScale(Math.min(1, 360 / textObj.width));
+    });
   }
 
   quote(y, h, text) {
@@ -2331,39 +2670,81 @@ class CertificateScene extends Phaser.Scene {
     });
   }
 
-  /* ---------- solo ---------- */
+  /* ---------- solo: rivalry header, score stamp, faction roast, challenge share ---------- */
   buildSolo(goals, results) {
     const { C } = CFG;
-    const f = this.f;
-    this.verdict = Phaser.Utils.Array.GetRandom(VERDICTS[goals]).replace('{F}', f.name);
-    const score = pop(this, 240, 370, `0/${CFG.SHOTS}`, 84, C.white, { stroke: hex(C.ink), strokeThickness: 8 })
+    const f = this.f, o = FACTIONS[this.data_.opp] || FACTIONS[f.rival];
+    this.o = o;
+    this.verdict = roastFor(f, o, goals);
+
+    // rivalry header: YOUR FACTION vs THEIR FACTION
+    this.g.fillStyle(C.ink, 0.6); this.g.fillRoundedRect(48, 160, 384, 96, 14);
+    const mine = pop(this, 240, 186, f.name, 26, f.accent).setOrigin(0.5);
+    const theirs = pop(this, 240, 236, o.name, 26, o.accent).setOrigin(0.5);
+    [mine, theirs].forEach(t => t.setScale(Math.min(1, 220 / t.width)));
+    this.root.add([
+      factionBadge(this, 88, 208, f, 50), factionBadge(this, 392, 208, o, 50),
+      mine, pop(this, 240, 211, 'VS', 16, C.white).setOrigin(0.5).setAlpha(0.8), theirs,
+    ]);
+
+    const score = pop(this, 240, 322, `0/${CFG.SHOTS}`, 80, C.white, { stroke: hex(C.ink), strokeThickness: 8 })
       .setOrigin(0.5).setShadow(5, 5, hex(C.ink), 0, true, true);
     const badges = this.add.graphics();
-    drawBadges(badges, 240, 438, results, 14, 38);
-    this.root.add([
-      txt(this, 240, 172, 'THIS CERTIFIES THAT A PLAYER FROM', 10, C.muted).setOrigin(0.5),
-      factionBadge(this, 240, 224, f, 62),
-      pop(this, 240, 286, f.name, 30, f.accent).setOrigin(0.5),
-      txt(this, 240, 316, 'SCORED', 10, C.muted).setOrigin(0.5),
-      score, badges,
-    ]);
-    this.quote(470, 94, this.verdict);
-    const col = goals >= 3 ? C.green : C.red;
-    const st = this.stamp(378, 356, goals === CFG.SHOTS ? 'STREET\nKING' : goals >= 3 ? 'CERTIFIED\nBALLER' : 'NEEDS\nPRACTICE', col);
-    this.countUp(score, goals, v => `${v}/${CFG.SHOTS}`, () => this.thump(st));
+    drawBadges(badges, 240, 390, results, 14, 38);
+    const scored = txt(this, 240, 274, 'SCORED', 10, C.muted).setOrigin(0.5);
+    this.root.add([scored, score, badges]);
+    this.showPoints(scored);
 
-    const challenge = this.registry.get('shareChallenge');
-    this.addButton(604, 54, challenge ? 'SEND CHALLENGE ON WHATSAPP' : 'SHARE TO WHATSAPP', 0x25d366, C.ink, () => this.shareSolo(), 20);
-    this.addButton(668, 48, 'PLAY AGAIN', C.gold, C.ink, () => this.restart(true));
-    this.addLink(722, 'CHANGE FACTION / OPPONENT', () => this.restart(false));
+    const st = stampFor(goals);
+    const stamp = this.rubberStamp(444, st.label, st.kind);
+    this.quote(480, 84, this.verdict);
+    this.countUp(score, goals, v => `${v}/${CFG.SHOTS}`, () => this.thump(stamp));
+
+    this.addButton(604, 54, 'CHALLENGE RIVALS ON WHATSAPP', 0x25d366, C.ink, () => this.shareSolo(), 20);
+    this.addButton(664, 48, 'TRY AGAIN (REDEEM YOURSELF)', C.gold, C.ink, () => this.restart(true), 20);
+    this.addLink(716, 'CHANGE OPPONENT', () => this.restart(false), 150);
+    this.addLink(716, '\u{1F3C6} LEADERBOARD', () => this.scene.launch('Leaderboard'), 330);
+  }
+
+  // Rubber stamp sized to its text: red + scuffed for shame, gold + glowing for glory
+  rubberStamp(y, label, kind) {
+    const { C } = CFG;
+    const col = { red: C.red, gold: C.gold, green: C.green, orange: 0xff9a3c }[kind];
+    const s = this.add.container(240, y).setAngle(-6).setAlpha(0).setScale(2);
+    const t = pop(this, 0, 0, label, 30, col, { stroke: hex(C.ink), strokeThickness: 4 }).setOrigin(0.5);
+    const w = Math.min(380, t.width + 40), h = 52;
+    if (t.width + 40 > 380) t.setScale(340 / t.width);
+    const g = this.add.graphics();
+    if (kind === 'gold') {
+      const glow = this.add.image(0, 0, 'soft').setTint(C.gold).setDisplaySize(w * 1.5, h * 2.8).setAlpha(0.55)
+        .setBlendMode(Phaser.BlendModes.ADD);
+      s.add(glow);
+      this.tweens.add({ targets: glow, alpha: 0.2, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+      t.setShadow(0, 0, hex(C.gold), 16, true, true);
+    }
+    g.fillStyle(C.ink, 0.55); g.fillRoundedRect(-w / 2, -h / 2, w, h, 8);
+    g.lineStyle(4, col, 1); g.strokeRoundedRect(-w / 2, -h / 2, w, h, 8);
+    g.lineStyle(1.5, col, 0.8); g.strokeRoundedRect(-w / 2 + 6, -h / 2 + 6, w - 12, h - 12, 5);
+    s.add([g, t]);
+    if (kind === 'red') {   // scuffed ink, like a cheap stamp pad
+      const scuff = this.add.graphics();
+      for (let i = 0; i < 26; i++) {
+        scuff.fillStyle(C.ink, 0.45 + Math.random() * 0.3);
+        scuff.fillCircle((Math.random() - 0.5) * w * 0.9, (Math.random() - 0.5) * h * 0.8, 0.8 + Math.random() * 1.8);
+      }
+      s.add(scuff);
+    }
+    this.root.add(s);
+    return s;
   }
 
   shareSolo() {
     const { goals, results } = this.data_;
     const name = askName();
-    const link = Challenge.link(name, this.f.id, results);
-    const msg = `\u{1F3C6} STREET PENALTY KING \u{1F3C6}\n\n${name} scored ${goals}/${CFG.SHOTS} for ${this.f.name} ⚽\n"${this.verdict}"\n\n` +
-      (link ? `Think say you fit beat am? Tap to take my challenge \u{1F447}\n${link}` : 'Think say you fit beat am? Take your 5 penalties and drop your certificate!');
+    const link = Challenge.link(name, this.f.id, results) || (hosted() ? gameUrl() : '');
+    const msg = `\u{1F3C6} STREET PENALTY KING \u{1F3C6}\n\n` +
+      `I just scored ${goals}/${CFG.SHOTS} representing ${this.f.name} against ${this.o.name}! ` +
+      `${this.o.name} fans, click here to prove you've got liver: ${link || '(open Street Penalty King)'}`;
     window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank', 'noopener');
   }
 
@@ -2376,6 +2757,9 @@ class CertificateScene extends Phaser.Scene {
     const me = Store.getName() || 'YOU';
     this.outcome = outcome;
     this.theirGoals = theirs;
+    const pts = txt(this, 240, 160, '', 10, C.mint).setOrigin(0.5);
+    this.root.add(pts);
+    this.showPoints(pts);
 
     const left = txt(this, 130, 262, `${me}\n${f.name}`, 10, C.white, { align: 'center' }).setOrigin(0.5, 0);
     const right = txt(this, 350, 262, `${d.name}\n${o.name}`, 10, C.white, { align: 'center' }).setOrigin(0.5, 0);
@@ -2405,11 +2789,13 @@ class CertificateScene extends Phaser.Scene {
       this.rematch = this.addButton(570, 54, 'REMATCH', C.gold, C.ink, () => this.askRematch());
       if (!Net.live()) this.rematch.setEnabled(false);
       this.addButton(634, 48, 'SHARE RESULT ON WHATSAPP', 0x25d366, C.ink, () => this.shareDuel(), 18);
-      this.addLink(700, 'LEAVE MATCH', () => { Net.leave(); this.restart(false); });
+      this.addLink(700, 'LEAVE MATCH', () => { Net.leave(); this.restart(false); }, 150);
+      this.addLink(700, '\u{1F3C6} LEADERBOARD', () => this.scene.launch('Leaderboard'), 330);
     } else {
       this.addButton(570, 54, 'SEND YOUR REPLY ON WHATSAPP', 0x25d366, C.ink, () => this.shareDuel(), 18);
       this.addButton(634, 48, 'PLAY AGAIN', C.gold, C.ink, () => this.restart(true, 'solo'));
-      this.addLink(700, 'CHANGE FACTION / OPPONENT', () => this.restart(false));
+      this.addLink(700, 'CHANGE OPPONENT', () => this.restart(false), 150);
+      this.addLink(700, '\u{1F3C6} LEADERBOARD', () => this.scene.launch('Leaderboard'), 330);
     }
   }
 
@@ -2459,9 +2845,236 @@ class CertificateScene extends Phaser.Scene {
     const m = this.registry.get('match');
     if (keepFaction && m) this.registry.set('match', { ...m, mode: mode || (m.mode === 'live' ? 'solo' : m.mode === 'challenge' ? 'solo' : m.mode), extra: {} });
     if (m && m.mode === 'live') Net.leave();
-    this.registry.set('shareChallenge', keepFaction ? this.registry.get('shareChallenge') : false);
     this.registry.set('skipMenu', keepFaction);
     this.scene.start('Game');
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Global leaderboard: factions (ranked by average goals), rivalries, top players
+   --------------------------------------------------------------------- */
+class LeaderboardScene extends Phaser.Scene {
+  constructor() { super('Leaderboard'); }
+
+  create() {
+    setupCamera(this);
+    const { W, H, C } = CFG;
+    // swallow taps so the screen underneath doesn't react
+    this.add.rectangle(0, 0, W, H, 0x0a101c, 0.94).setOrigin(0).setInteractive();
+    const { root, g } = glassPanel(this, 'GLOBAL LEADERBOARD');
+    this.root = root;
+    this.scope = 'week';
+    this.tab = 0;
+    this.page = 0;
+    this.boardCache = {};
+    this.me = Profile.get();
+
+    // season toggle
+    this.scopeG = this.add.graphics();
+    root.add(this.scopeG);
+    this.scopeTexts = [['week', 'THIS WEEK', 160], ['all', 'ALL TIME', 320]].map(([key, label, x]) => {
+      const t = txt(this, x, 151, label, 12, C.white).setOrigin(0.5);
+      root.add(t);
+      const z = this.add.zone(x, 151, 150, 30).setInteractive({ useHandCursor: true });
+      z.on('pointerup', () => { if (this.scope !== key) { this.scope = key; this.page = 0; this.fetchBoard(); } });
+      return { key, t, x };
+    });
+
+    // tabs
+    this.tabG = this.add.graphics();
+    root.add(this.tabG);
+    this.tabTexts = ['FACTIONS', 'RIVALRIES', 'PLAYERS'].map((label, i) => {
+      const x = 36 + i * 138, w = 132;
+      const t = txt(this, x + w / 2, 194, label, 12, C.white).setOrigin(0.5);
+      root.add(t);
+      const z = this.add.zone(x + w / 2, 194, w, 32).setInteractive({ useHandCursor: true });
+      z.on('pointerup', () => { if (this.tab !== i) { this.tab = i; this.page = 0; this.drawBoard(); } });
+      return { t, x, w };
+    });
+
+    this.content = this.add.container(0, 0);
+    root.add(this.content);
+    this.contentZones = [];
+
+    const back = makeButton(this, 240, 668, 240, 48, '‹ BACK', C.track, C.white, () => this.scene.stop(), 20);
+    root.add(back);
+    root.add(txt(this, 240, 716, 'Factions ranked by average goals per match (10+ matches to rank). Your first 10 matches a day count. Weeks reset Monday, Lagos time.',
+      9, C.white, { align: 'center', wordWrap: { width: 380 }, lineSpacing: 2 }).setOrigin(0.5).setAlpha(0.6));
+
+    this.fetchBoard();
+  }
+
+  drawChrome() {
+    const { C } = CFG;
+    this.scopeG.clear();
+    this.scopeTexts.forEach(s => {
+      const on = s.key === this.scope;
+      this.scopeG.fillStyle(on ? C.gold : 0x0b1622, on ? 1 : 0.4); this.scopeG.fillRoundedRect(s.x - 75, 137, 150, 28, 14);
+      this.scopeG.lineStyle(1, 0xffffff, on ? 0 : 0.2); this.scopeG.strokeRoundedRect(s.x - 75, 137, 150, 28, 14);
+      s.t.setColor(hex(on ? C.ink : C.white));
+    });
+    this.tabG.clear();
+    this.tabTexts.forEach((t, i) => {
+      const on = i === this.tab;
+      this.tabG.fillStyle(on ? C.mint : 0x0b1622, on ? 0.95 : 0.45); this.tabG.fillRoundedRect(t.x, 178, t.w, 32, 12);
+      this.tabG.lineStyle(1, 0xffffff, on ? 0 : 0.2); this.tabG.strokeRoundedRect(t.x, 178, t.w, 32, 12);
+      t.t.setColor(hex(on ? C.ink : C.white));
+    });
+  }
+
+  clearContent() {
+    this.content.removeAll(true);
+    this.contentZones.forEach(z => z.destroy());
+    this.contentZones = [];
+  }
+
+  message(msg) {
+    this.drawChrome();
+    this.clearContent();
+    this.content.add(txt(this, 240, 400, msg, 13, CFG.C.white, { align: 'center', wordWrap: { width: 360 }, lineSpacing: 4 }).setOrigin(0.5).setAlpha(0.85));
+  }
+
+  async fetchBoard() {
+    const scope = this.scope;
+    if (!Board.configured()) {
+      this.message("THE LEADERBOARD ISN'T CONNECTED YET.\nYOUR FACTION AND MATCHES ARE SAVED ON THIS PHONE.");
+      return;
+    }
+    if (this.boardCache[scope]) { this.drawBoard(); return; }
+    this.message('LOADING…');
+    try {
+      const [factions, players] = await Promise.all([Board.board(scope), Board.top(scope)]);
+      this.boardCache[scope] = { factions: factions || [], players: players || [] };
+      if (this.sys.isActive() && this.scope === scope) this.drawBoard();
+    } catch (e) {
+      if (this.sys.isActive() && this.scope === scope) this.message('COULD NOT LOAD THE LEADERBOARD.\nCHECK YOUR INTERNET AND TRY AGAIN.');
+    }
+  }
+
+  drawBoard() {
+    const d = this.boardCache[this.scope];
+    if (!d) { this.fetchBoard(); return; }
+    this.drawChrome();
+    this.clearContent();
+    if (this.tab === 0) this.renderFactions(d.factions);
+    else if (this.tab === 1) this.renderRivalries(d.factions);
+    else this.renderPlayers(d.players);
+  }
+
+  // every faction, including ones with no matches yet
+  standings(rows) {
+    const by = {};
+    rows.forEach(r => { if (FACTIONS[r.faction]) by[r.faction] = r; });
+    return Object.keys(FACTIONS).map(id => by[id] || { faction: id, matches: 0, goals: 0, avg_goals: 0, players: 0, rank: null })
+      .sort((a, b) => (a.rank == null) - (b.rank == null) || (a.rank || 0) - (b.rank || 0)
+        || Number(b.avg_goals) - Number(a.avg_goals) || b.matches - a.matches);
+  }
+
+  pager(total, perPage, y) {
+    const { C } = CFG;
+    const pages = Math.max(1, Math.ceil(total / perPage));
+    this.page = Math.min(this.page, pages - 1);
+    if (pages <= 1) return;
+    this.content.add(txt(this, 240, y, `PAGE ${this.page + 1} / ${pages}`, 11, C.white).setOrigin(0.5).setAlpha(0.8));
+    [[-1, '‹', 168], [1, '›', 312]].forEach(([dir, label, x]) => {
+      const t = pop(this, x, y, label, 26, C.mint).setOrigin(0.5);
+      this.content.add(t);
+      const z = this.add.zone(x, y, 56, 34).setInteractive({ useHandCursor: true });
+      z.on('pointerup', () => {
+        const next = this.page + dir;
+        if (next >= 0 && next < pages) { this.page = next; this.drawBoard(); }
+      });
+      this.contentZones.push(z);
+    });
+  }
+
+  rowBox(g, y, h, highlight) {
+    g.fillStyle(0x0b1622, highlight ? 0.75 : 0.4); g.fillRoundedRect(36, y, 408, h, 10);
+    g.lineStyle(highlight ? 2 : 1, highlight ? CFG.C.mint : 0xffffff, highlight ? 0.95 : 0.12); g.strokeRoundedRect(36, y, 408, h, 10);
+  }
+
+  renderFactions(rows) {
+    const { C } = CFG;
+    const list = this.standings(rows), per = 11;
+    const g = this.add.graphics();
+    this.content.add(g);
+    this.content.add([
+      txt(this, 54, 226, '#', 9, C.white).setOrigin(0.5).setAlpha(0.6),
+      txt(this, 100, 226, 'FACTION', 9, C.white).setOrigin(0, 0.5).setAlpha(0.6),
+      txt(this, 306, 226, 'AVG / MATCH', 9, C.white).setOrigin(0.5).setAlpha(0.6),
+      txt(this, 432, 226, 'GOALS · MATCHES', 9, C.white).setOrigin(1, 0.5).setAlpha(0.6),
+    ]);
+    this.pager(list.length, per, 616);
+    list.slice(this.page * per, this.page * per + per).forEach((r, i) => {
+      const f = FACTIONS[r.faction], y = 238 + i * 33, cy = y + 14;
+      const ranked = r.rank != null;
+      this.rowBox(g, y, 29, this.me && this.me.faction === r.faction);
+      const name = txt(this, 100, cy, f.name, 12, f.accent).setOrigin(0, 0.5);
+      name.setScale(Math.min(1, 180 / name.width));
+      this.content.add([
+        pop(this, 54, cy, ranked ? String(r.rank) : '–', 16, ranked && r.rank <= 3 ? C.gold : C.white).setOrigin(0.5),
+        factionBadge(this, 80, cy, f, 20),
+        name,
+        pop(this, 306, cy, Number(r.avg_goals).toFixed(2), 18, ranked ? C.white : C.muted).setOrigin(0.5),
+        txt(this, 432, cy, `${r.goals} · ${r.matches}`, 10, C.white).setOrigin(1, 0.5).setAlpha(ranked ? 0.85 : 0.5),
+      ]);
+    });
+  }
+
+  renderRivalries(rows) {
+    const { C } = CFG;
+    const by = {};
+    this.standings(rows).forEach(r => { by[r.faction] = r; });
+    const pairs = rivalryPairs(), per = 9;
+    const g = this.add.graphics();
+    this.content.add(g);
+    this.pager(pairs.length, per, 616);
+    pairs.slice(this.page * per, this.page * per + per).forEach(([a, b], i) => {
+      const A = FACTIONS[a], B = FACTIONS[b], ra = by[a], rb = by[b];
+      const y = 226 + i * 42;
+      const va = Number(ra.avg_goals), vb = Number(rb.avg_goals);
+      const share = va + vb > 0 ? va / (va + vb) : 0.5;
+      const ahead = va === vb ? null : (va > vb ? a : b);
+      const leader = ahead && by[ahead].rank != null ? ahead : null;   // crown only factions with 10+ matches
+      this.rowBox(g, y, 38, this.me && (this.me.faction === a || this.me.faction === b));
+      const left = txt(this, 48, y + 12, `${leader === a ? '\u{1F451} ' : ''}${A.name}`, 11, A.accent).setOrigin(0, 0.5);
+      const right = txt(this, 432, y + 12, `${B.name}${leader === b ? ' \u{1F451}' : ''}`, 11, B.accent).setOrigin(1, 0.5);
+      [left, right].forEach(t => t.setScale(Math.min(1, 150 / t.width)));
+      this.content.add([
+        left, right,
+        txt(this, 240, y + 12, `${va.toFixed(2)}  vs  ${vb.toFixed(2)}`, 10, C.white).setOrigin(0.5).setAlpha(0.85),
+      ]);
+      const bx = 48, bw = 384, by2 = y + 25;
+      g.fillStyle(A.accent, 1); g.fillRoundedRect(bx, by2, Math.max(4, bw * share), 7, 3);
+      g.fillStyle(B.accent, 1); g.fillRoundedRect(bx + bw * share, by2, Math.max(4, bw * (1 - share)), 7, 3);
+    });
+  }
+
+  renderPlayers(players) {
+    const { C } = CFG;
+    if (!players.length) { this.message('NO MATCHES YET THIS PERIOD.\nPLAY ONE AND PUT YOUR NAME ON THE BOARD!'); return; }
+    const per = 11;
+    const g = this.add.graphics();
+    this.content.add(g);
+    this.content.add([
+      txt(this, 54, 226, '#', 9, C.white).setOrigin(0.5).setAlpha(0.6),
+      txt(this, 100, 226, 'PLAYER', 9, C.white).setOrigin(0, 0.5).setAlpha(0.6),
+      txt(this, 432, 226, 'GOALS · MATCHES', 9, C.white).setOrigin(1, 0.5).setAlpha(0.6),
+    ]);
+    this.pager(players.length, per, 616);
+    players.slice(this.page * per, this.page * per + per).forEach((p, i) => {
+      const f = FACTIONS[p.faction] || FACTIONS.cr7, y = 238 + i * 33, cy = y + 14, n = this.page * per + i + 1;
+      const isMe = this.me && this.me.nickname === p.nickname && this.me.faction === p.faction;
+      this.rowBox(g, y, 29, isMe);
+      this.content.add([
+        pop(this, 54, cy, String(n), 16, n <= 3 ? C.gold : C.white).setOrigin(0.5),
+        factionBadge(this, 80, cy, f, 20),
+        txt(this, 100, cy - 6, cleanName(p.nickname), 12, C.white).setOrigin(0, 0.5),
+        txt(this, 100, cy + 8, f.name, 8, f.accent).setOrigin(0, 0.5),
+        pop(this, 380, cy, String(p.goals), 18, C.white).setOrigin(1, 0.5),
+        txt(this, 432, cy, `· ${p.matches}`, 10, C.white).setOrigin(1, 0.5).setAlpha(0.7),
+      ]);
+    });
   }
 }
 
@@ -2477,8 +3090,9 @@ function boot() {
     backgroundColor: '#0b0d12',
     scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
     input: { activePointers: 1 },
-    scene: [GameScene, FactionScene, LobbyScene, CertificateScene],
+    scene: [GameScene, FactionScene, LobbyScene, CertificateScene, LeaderboardScene],
   });
+  Board.sync();   // pick up (or register) this phone's leaderboard profile in the background
 }
 const fontReady = document.fonts
   ? Promise.race([

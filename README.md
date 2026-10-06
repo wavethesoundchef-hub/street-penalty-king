@@ -13,7 +13,7 @@ Open `index.html` in any modern browser. Phaser and the fonts (Anton, Montserrat
 
 ## Factions
 
-Before each match you pick **your side** and then **your opponent** (any faction, from any tab) in the **GOAT Supremacy: Lagos Streets** menu. It has three tabs:
+The first time you open the game you choose **who you represent** and a nickname. Your faction is locked for 30 days (with one free switch), and every match you play counts for it on the global leaderboard. Before each match you pick **your opponent** (any faction, from any tab). The menu has three tabs:
 
 - **Footballers:** Team CR7 vs Team Messi, Team Neymar vs Team Mbappé, Team Haaland vs Team Vini Jr, Team Osimhen vs Team Lookman, Team Okocha vs Team Kanu
 - **Artistes:** Starboy FC (Wizkid) vs 30BG (Davido) vs Outsiders (Burna Boy), Afrorave (Rema) vs Ololade (Asake), Tems vs Ayra Starr, Kizz Daniel vs Fireboy DML, YBNL (Olamide) vs Seyi Vibez, Shallipopi vs Odumodublvck
@@ -25,6 +25,24 @@ What your pick changes:
 - The keeper wears your chosen opponent's kit.
 - The header shows both badges, your score and your goal streak, and goal pop-ups use your faction's chants and colours.
 - Your choice is saved in the browser and preselected next time. Saving needs the game to be opened from a web address; when you open the file directly from your computer, the choice only lasts until you close the page.
+
+## Global leaderboard
+
+- **Factions:** ranked by average goals per match; a faction needs 10+ matches in the period to be ranked. Total goals and matches are shown too.
+- **Rivalries:** head-to-head bars (CR7 vs Messi, Wizkid FC vs 30BG, Mainland vs Island, and so on).
+- **Players:** the top 20 scorers.
+- **This week / all time.** Weeks reset on Monday, Lagos time.
+- Only your first 10 matches in any 24 hours count; after that matches are practice. Matches less than 12 seconds apart are rejected.
+
+Players are anonymous: the game creates a hidden account on each phone, so there is no email or password. Clearing the browser data starts a new player.
+
+### Setting up the leaderboard (once)
+
+1. In your Supabase project, open **SQL Editor**, paste the contents of [`supabase/schema.sql`](supabase/schema.sql) and run it.
+2. Go to **Authentication -> Sign In / Providers** and turn on **Allow anonymous sign-ins**.
+3. In **Project Settings -> API**, copy the **Project URL** and the **anon public** key into the `SUPABASE` settings near the top of the script in `index.html`.
+
+The anon key is designed to be public. The database exposes only the checked `spk_*` functions, so players can't edit the tables directly. Never put the **service_role** key in the game. Until the settings are filled in, the game runs offline and the leaderboard says it isn't connected.
 
 ## Play a friend
 
@@ -38,7 +56,13 @@ Invite and challenge links only open for friends once the game is hosted online 
 
 ## Certificate
 
-After 5 shots you get a **Match Certificate** with your faction, score and a roast or praise line. You can share the result to WhatsApp, and when the game is hosted online the message includes a link to it.
+After 5 shots you get a **Match Certificate** showing your faction vs your opponent, your score, and a stamp:
+
+- 0 or 1 goals: a red DISGRACE TO FC 🤡 or SAPA FOOTBALL ❌ stamp
+- 2 or 3 goals: E NEVER REACH or YOU TRY
+- 4 or 5 goals: a glowing gold AGBA BALLER 🏆 or NO LELE 🔥 stamp
+
+The commentary is written for your faction, your opponent and your score (for example, Wizkid FC on 0/5 against 30BG gets roasted about disgracing Starboy). **Challenge Rivals on WhatsApp** sends your score with a challenge link your opponent's fans can open and play.
 
 This is a fan-made game. It isn't affiliated with or endorsed by any player, artist or club. The badges and jerseys are original drawings, not official logos or kits.
 
@@ -49,4 +73,5 @@ This is a fan-made game. It isn't affiliated with or endorsed by any player, art
 - How strong the curve is: the `curve` line in `GameScene.onUp()`
 - Factions (names, jersey names and numbers, colours, goal chants): `FACTIONS`
 - Which factions appear in which menu tab and row: `TABS`
-- Certificate roast and praise lines: `VERDICTS`
+- Leaderboard rules (daily cap, rate limit, faction lock, ranking): `supabase/schema.sql`
+- Certificate roasts and praise: `ROAST_OVERRIDES` (exact faction + score lines), `ROASTS` (templates), `HEROES` (names used in the templates), `stampFor()` (stamps)
